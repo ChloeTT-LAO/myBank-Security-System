@@ -62,6 +62,8 @@ class Users(Base):
     # 存储使用哪个密钥版本加密（例如 "v1", "v2"），所有敏感字段可以共享同一版本
     key_name = Column(String(50))
     key_version = Column(String(50))
+    last_updated_by = Column(Integer, ForeignKey('users.user_id'))
+    last_updated_at = Column(DateTime(timezone=True))
 
     created_at = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc),
@@ -94,6 +96,13 @@ class Accounts(Base):
     balance = Column(DECIMAL(15, 2), default=0.00)
     account_type = Column(String(50))
     created_at = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc))
+    is_frozen = Column(Boolean, default=False)
+    freeze_reason = Column(String(255))
+    frozen_at = Column(DateTime(timezone=True))
+    frozen_by = Column(Integer, ForeignKey('users.user_id'))
+    unfrozen_at = Column(DateTime(timezone=True))
+    unfrozen_by = Column(Integer, ForeignKey('users.user_id'))
+    unfreeze_reason = Column(String(255))
 
     user = relationship("Users", back_populates="accounts")
     transactions_source = relationship("Transactions", foreign_keys="[Transactions.source_account_id]",
@@ -122,6 +131,9 @@ class Transactions(Base):
     transaction_signature = Column(String(255), nullable=True)  # 存储HMAC签名
     requires_additional_verification = Column(Boolean, default=False)
     verification_status = Column(String(50), default='not_required')  # 'not_required', 'pending', 'verified', 'failed'
+    is_suspicious = Column(Boolean, default=False)
+    suspicious_reason = Column(String(255))
+    processed_by_employee = Column(Integer, ForeignKey('users.user_id'))
 
     source_account = relationship("Accounts", foreign_keys=[source_account_id], back_populates="transactions_source")
     destination_account = relationship("Accounts", foreign_keys=[destination_account_id],

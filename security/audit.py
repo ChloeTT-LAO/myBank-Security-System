@@ -10,7 +10,7 @@ Session = sessionmaker(bind=engine)
 
 def log_operation(user_id: int, operation: str, details: str = "", ip_address: str = None, user_agent: str = None):
     """
-    记录用户操作
+    记录用户操作到审计日志
     """
     session = Session()
     try:
@@ -27,12 +27,13 @@ def log_operation(user_id: int, operation: str, details: str = "", ip_address: s
         return log_entry.log_id
     except Exception as e:
         session.rollback()
-        raise e
+        print(f"Error logging operation: {str(e)}")
+        return None
     finally:
         session.close()
 
 
-def log_security_event(user_id: int, event_type: str, description: str, user_agent: str = None):
+def log_security_event(user_id: int, event_type: str, description: str, ip_address: str = None, user_agent: str = None):
     """
     记录安全事件
     """
@@ -51,7 +52,8 @@ def log_security_event(user_id: int, event_type: str, description: str, user_age
         return security_log.security_log_id
     except Exception as e:
         session.rollback()
-        raise e
+        print(f"Error logging security event: {str(e)}")
+        return None
     finally:
         session.close()
 

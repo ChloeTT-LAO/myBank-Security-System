@@ -1,12 +1,12 @@
 import hashlib
 import json
 import hmac
-from decimal import Decimal
-from typing import Dict, Any, Optional
 import pyotp
+from decimal import Decimal
+from typing import Dict, Any, Optional, Union
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
-from config.mybank_db import Transactions, Users, SecurityLogs
+from config.mybank_db import Transactions, Users, SecurityLogs, Accounts
 from config.config import DATABASE_URI
 from security.encryption import compute_hmac_sha256
 import datetime
@@ -63,7 +63,7 @@ def verify_transaction_integrity(transaction_id: int) -> bool:
             "amount": transaction.amount,
             "transaction_type": transaction.transaction_type,
             "timestamp": transaction.timestamp,
-            "details": transaction.encrypted_details  # 注意这里使用加密后的详情
+            "details": transaction.encrypted_note  # 注意这里使用加密后的详情
         }
 
         # 生成当前数据的哈希值
@@ -111,39 +111,20 @@ def is_high_risk_transaction(transaction_data: Dict[str, Any]) -> bool:
     检查交易是否为高风险交易
     """
     # 检查交易金额是否超过阈值
-    if Decimal(str(transaction_data.get("amount", 0))) >= HIGH_VALUE_THRESHOLD:
+    amount = transaction_data.get("amount", 0)
+    if isinstance(amount, str):
+        amount = Decimal(amount)
+
+    if amount >= HIGH_VALUE_THRESHOLD:
         return True
 
     # 检查交易类型是否为不常见类型
     if transaction_data.get("transaction_type") in UNUSUAL_TRANSACTION_TYPES:
         return True
 
-    # 可以添加更多的风险检查逻辑
+    # 可以添加更多的风险检查逻辑，例如跨国交易、新账户大额交易等
 
     return False
-
-
-def log_transaction_verification(transaction_id: int, user_id: int, verification_type: str, is_success: bool,
-                                 details: str = ""):
-    """
-    记录交易验证事件
-    """
-    session = Session()
-    try:
-        status = "success" if is_success else "failed"
-        security_log = SecurityLogs(
-            event_type=f"transaction_{verification_type}_{status}",
-            description=f"Transaction {transaction_id} {verification_type} verification {status}. {details}",
-            user_id=user_id,
-            created_at=datetime.datetime.now(tz=datetime.timezone.utc)
-        )
-        session.add(security_log)
-        session.commit()
-    except Exception as e:
-        session.rollback()
-        print(f"Error logging transaction verification: {str(e)}")
-    finally:
-        session.close()
 
 
 def require_additional_verification(transaction_data: Dict[str, Any]) -> bool:
@@ -154,21 +135,26 @@ def require_additional_verification(transaction_data: Dict[str, Any]) -> bool:
     if is_high_risk_transaction(transaction_data):
         return True
 
-    # 可以添加更多的触发条件
+    # 其他可能需要验证的情况
+    # 例如，不常用地点的交易，异常交易模式等
 
     return False
 
 
-def verify_high_value_transaction(transaction_id: int, user_id: int, verification_code: str) -> bool:
+def verify_high_value_transaction(transaction_id: Optional[int], user_id: int, verification_code: str) -> bool:
     """
     完成高额交易的额外验证
+    如果transaction_id为None，只验证码验证，不绑定到特定交易
     """
     session = Session()
     try:
-        transaction = session.query(Transactions).filter_by(transaction_id=transaction_id).first()
-        if not transaction:
-            return False
+        # 验证是否有效交易（如果提供了交易ID）
+        if transaction_id is not None:
+            transaction = session.query(Transactions).filter_by(transaction_id=transaction_id).first()
+            if not transaction:
+                return False
 
+        # 获取用户TOTP密钥
         user = session.query(Users).filter_by(user_id=user_id).first()
         if not user:
             return False
@@ -177,15 +163,28 @@ def verify_high_value_transaction(transaction_id: int, user_id: int, verificatio
         totp = pyotp.TOTP(user.totp_secret)
         verification_result = totp.verify(verification_code)
 
-        # 记录验证结果
-        log_transaction_verification(
-            transaction_id,
-            user_id,
-            "additional",
-            verification_result,
-            "High value transaction additional verification"
-        )
+        # 如果有交易ID，记录验证结果
+        if transaction_id is not None:
+            # 更新交易验证状态
+            transaction = session.query(Transactions).filter_by(transaction_id=transaction_id).first()
+            if transaction:
+                transaction.verification_status = 'verified' if verification_result else 'failed'
+                session.commit()
+
+            # 记录验证事件
+            security_log = SecurityLogs(
+                user_id=user_id,
+                event_type="high_value_transaction_verification",
+                description=f"High value transaction {transaction_id} verification {'success' if verification_result else 'failed'}",
+                created_at=datetime.datetime.now(tz=datetime.timezone.utc)
+            )
+            session.add(security_log)
+            session.commit()
 
         return verification_result
+    except Exception as e:
+        session.rollback()
+        print(f"Error in high value transaction verification: {str(e)}")
+        return False
     finally:
         session.close()
