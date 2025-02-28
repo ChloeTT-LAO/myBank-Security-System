@@ -73,6 +73,52 @@ def employss_send_message(client_id: int, message_text: str, token: str):
     return resp
 
 
+def employee_read_messages(token: str):
+    """
+    客户端函数：读取 target_user_id 的全部消息（区分已读/未读）
+    """
+    timestamp = int(time.time())
+    message_str = f"read_message|email={email}|timestamp={timestamp}"
+
+    # 读取本地私钥 & 生成签名
+    safe_email = email.replace("@", "_at_").replace(".", "_dot_")
+    with open(f"employee_secret/{safe_email}_private_key.pem", "rb") as f:
+        private_key_pem = f.read()
+    signature_bytes = sign_data(message_str.encode('utf-8'), private_key_pem)
+    signature_hex = signature_bytes.hex()
+
+    # 读取 HMAC 密钥 & 生成 HMAC
+    with open(f"employee_secret/{safe_email}_hmac_key.txt", "rb") as f:
+        hmac_key = f.read()
+    hmac_value = compute_hmac_sha256(message_str.encode('utf-8'), hmac_key)
+
+    payload = {
+        "message": message_str,
+        "signature": signature_hex,
+        "hmac": hmac_value
+    }
+
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    url = "https://127.0.0.1:5001/client/message/read"
+    resp = requests.post(url, json=payload, headers=headers, verify=False)
+    if resp.status_code == 200:
+        # 4) 解析返回的JSON
+        data = resp.json()
+        unread_list = data.get("unread_messages", [])
+        read_list = data.get("read_messages", [])
+        print("===== Unread Messages =====")
+        for msg in unread_list:
+            print(f"Sender: {msg['sender_id']}, "
+                  f"Content: {msg['content']}, ")
+
+        print("===== Read Messages =====")
+        for msg in read_list:
+            print(f"Sender: {msg['sender_id']}, "
+                  f"Content: {msg['content']}, ")
+    return resp
 
 
 if __name__ == "__main__":
@@ -84,14 +130,16 @@ if __name__ == "__main__":
     resp = user_login(email, password)
     token = resp.json()["token"]
 
-        while(1):
-            print("Please enter the business you want to handle: ")
-            print("1. Customer Information 2. Customer Transfer 3. Customer Commuunication 4. Logout")
-            service = input("Enter your service: ")
-            if service == "1":
-                client_id = input("Enter the client's ID: ")
-                resp = user_create_account(email, account_type, token)
+    while(1):
+        print("Please enter the business you want to handle: ")
+        print("1. Customer Information 2. Customer Transfer 3. Customer Communication 4. Logout")
+        service = input("Enter your service: ")
+        if service == "1":
+            resp_0 = employee_read_messages(token)
+            client_id = int(input("Enter the client's ID: "))
+            message = input("Enter your message: ")
+            resp = employss_send_message(client_id, message, token)
 
-            elif service == "3":
-                resp = user_logout(token)
-                break
+        elif service == "3":
+            resp = user_logout(token)
+            break

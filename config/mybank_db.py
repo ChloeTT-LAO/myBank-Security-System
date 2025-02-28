@@ -171,7 +171,6 @@ class Messages(Base):
     message_id = Column(Integer, primary_key=True, autoincrement=True)
     sender_id = Column(Integer, ForeignKey('users.user_id'), nullable=False)
     receiver_id = Column(Integer, ForeignKey('users.user_id'), nullable=False)
-    subject = Column(String(255))
 
     # 存储加密后的消息内容相关信息
     key_version = Column(String(50))    # 用于标识使用哪个密钥版本

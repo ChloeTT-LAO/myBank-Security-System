@@ -246,6 +246,54 @@ def client_send_message(employee_id: int, message_text: str, token: str):
     return resp
 
 
+def client_read_messages(token: str):
+    """
+    客户端函数：读取 target_user_id 的全部消息（区分已读/未读）
+    """
+    timestamp = int(time.time())
+    message_str = f"read_message|email={email}|timestamp={timestamp}"
+
+    # 读取本地私钥 & 生成签名
+    safe_email = email.replace("@", "_at_").replace(".", "_dot_")
+    with open(f"user_secret/{safe_email}_private_key.pem", "rb") as f:
+        private_key_pem = f.read()
+    signature_bytes = sign_data(message_str.encode('utf-8'), private_key_pem)
+    signature_hex = signature_bytes.hex()
+
+    # 读取 HMAC 密钥 & 生成 HMAC
+    with open(f"user_secret/{safe_email}_hmac_key.txt", "rb") as f:
+        hmac_key = f.read()
+    hmac_value = compute_hmac_sha256(message_str.encode('utf-8'), hmac_key)
+
+    payload = {
+        "message": message_str,
+        "signature": signature_hex,
+        "hmac": hmac_value
+    }
+
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    url = "https://127.0.0.1:5001/client/message/read"
+    resp = requests.post(url, json=payload, headers=headers, verify=False)
+    if resp.status_code == 200:
+        # 4) 解析返回的JSON
+        data = resp.json()
+        unread_list = data.get("unread_messages", [])
+        read_list = data.get("read_messages", [])
+        print("===== Unread Messages =====")
+        for msg in unread_list:
+            print(f"Sender: {msg['sender_id']}, "
+                  f"Content: {msg['content']}, ")
+
+        print("===== Read Messages =====")
+        for msg in read_list:
+            print(f"Sender: {msg['sender_id']}, "
+                  f"Content: {msg['content']}, ")
+    return resp
+
+
 
 if __name__ == "__main__":
     print("==================== Welcome to myBank System! ====================")
@@ -283,6 +331,18 @@ if __name__ == "__main__":
                 amount = input("Enter your amount: ")
                 resp = user_withdraw(account_number, amount, token)
 
-            elif service == "6":
+            elif service == "4":
+                source_account_number = input("Enter your source account number: ")
+                target_account_number = input("Enter your target account number: ")
+                amount = input("Enter your amount: ")
+                resp = user_transfer(source_account_number, target_account_number, amount, token)
+
+            elif service == "5":
+                resp = client_read_messages(token)
+                employee_id = input("Enter the employee ID who you want to send message to: ")
+                message = input("Enter your message: ")
+                resp_1 = client_send_message(int(employee_id), message, token)
+
+            else:
                 resp = user_logout(token)
                 break

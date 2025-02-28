@@ -276,11 +276,24 @@ def client_send_message(current_user):
 # 查看消息（例如已接收消息）
 @client_bp.route('/message/read', methods=['GET'])
 @client_required
-def client_get_messages(current_client):
+def client_get_messages(current_user):
+    data = request.json or {}
+    message_str = data.get("message", "")
+    signature_hex = data.get("signature", "")
+    hmac_value = data.get("hmac", "")
+
+    is_valid = verify_signature(message_str, signature_hex)
+    if not is_valid:
+        return jsonify({"error": "Signature invalid!"}), 400
+
+    is_integrity = verify_hmac_sha256(message_str, current_user, hmac_value)
+    if not is_integrity:
+        return jsonify({"error": "Signature invalid!"}), 400
+
     try:
         # 假设 read_message 函数能返回当前用户所有消息
-        messages = read_message(current_client.user_id)
-        return jsonify({'messages': messages}), 200
+        messages = read_message(current_user.user_id)
+        return jsonify(messages), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 

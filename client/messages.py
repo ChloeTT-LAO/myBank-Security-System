@@ -3,7 +3,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 from config.config import DATABASE_URI
 import datetime
-from security.encryption import aes_256_gcm_encrypt
+from security.encryption import aes_256_gcm_encrypt, aes_256_gcm_decrypt
 from security.key_management import retrieve_key_from_db
 
 engine = create_engine(DATABASE_URI)
@@ -35,15 +35,35 @@ def send_message(sender_id: int, receiver_id: int, plain_message: str):
     finally:
         session.close()
 
-def read_message(message_id: int):
+
+def read_message(user_id: int):
     session = Session()
     try:
-        message = session.query(Messages).filter_by(message_id=message_id).first()
-        if message:
-            # 解密消息内容
-            plain_message = decrypt_data(message.message_body)
-            return plain_message
-        else:
-            return None
+        unread_msgs = session.query(Messages).filter(
+            receiver_id=user_id).filter(read_status='unread').all()
+
+        read_msgs = session.query(Messages).filter(
+            receiver_id=user_id).filter(read_status='read').all()
+
+        def msg_to_dict(msg):
+            aes_key, key_version = retrieve_key_from_db(key_name=key_name)
+            return {
+                "sender_id": msg.sender_id,
+                "content": aes_256_gcm_decrypt(aes_key, msg.nonce, msg.ciphertext),
+                "read_status": msg.read_status
+            }
+
+        unread_list = [msg_to_dict(m) for m in unread_msgs]
+        read_list = [msg_to_dict(m) for m in read_msgs]
+
+        for msg in unread_msgs:
+            msg.read_status = 'read'
+        session.commit()
+
+        return {
+            "unread_messages": unread_list,
+            "read_messages": read_list
+        }
+
     finally:
         session.close()
