@@ -4,11 +4,12 @@ import pyotp
 from flask import Blueprint, request, jsonify
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from authentication import get_session, register_user
+from authentication import get_session, register_user, reset_totp, require_password_change
 from config.config import DATABASE_URI
 from config.mybank_db import Users
 from .security_implement import view_security_logs, perform_system_backup, apply_system_patch
-from .key_management import generate_aes_key, rotate_key, generate_rsa_key
+from .key_management import generate_aes_key, rotate_key, generate_rsa_key, admin_list_keys, admin_backup_keys, \
+    admin_restore_keys, admin_rotate_key
 
 admin_bp = Blueprint('admin_bp', __name__)
 engine = create_engine(DATABASE_URI)
@@ -74,82 +75,131 @@ def employee_register():
         return jsonify({'error': str(e)}), 400
 
 
-# @admin_bp.route('/users', methods=['GET'])
-# @admin_required
-# def api_list_all_users(current_admin):
-#     """
-#     列出所有用户
-#     GET /admin/users
-#     """
-#     try:
-#         users = list_all_users(current_admin)
-#         return jsonify({'users': users}), 200
-#     except Exception as e:
-#         return jsonify({'error': str(e)}), 400
-#
-# @admin_bp.route('/user/<int:user_id>/role', methods=['POST'])
-# @admin_required
-# def api_update_user_role(current_admin, user_id):
-#     """
-#     更新指定用户的角色
-#     POST /admin/user/<user_id>/role
-#     JSON body: {"new_role": "bank_employee"}
-#     """
-#     data = request.json or {}
-#     new_role = data.get('new_role')
-#     if not new_role:
-#         return jsonify({'error': 'Missing new_role'}), 400
-#
-#     try:
-#         updated_user = update_user_role(current_admin, user_id, new_role)
-#         return jsonify({
-#             'message': 'User role updated',
-#             'user_id': updated_user.user_id,
-#             'new_role': updated_user.role
-#         }), 200
-#     except Exception as e:
-#         return jsonify({'error': str(e)}), 400
+@admin_bp.route('/keys', methods=['GET'])
+@admin_required
+def api_list_keys(current_admin):
+    """
+    获取所有密钥信息（不包含实际密钥值）
+    GET /admin/keys?include_expired=false
+    """
+    include_expired = request.args.get('include_expired', 'false').lower() == 'true'
+
+    try:
+        keys = admin_list_keys(current_admin.user_id, include_expired)
+        return jsonify({'keys': keys}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@admin_bp.route('/keys/backup', methods=['POST'])
+@admin_required
+def api_backup_keys(current_admin):
+    """
+    备份所有有效密钥
+    POST /admin/keys/backup
+    JSON body: {"backup_password": "your_strong_password", "backup_location": "optional_path"}
+    """
+    data = request.json or {}
+    backup_password = data.get('backup_password')
+    backup_location = data.get('backup_location', 'key_backups')
+
+    if not backup_password:
+        return jsonify({'error': 'Backup password is required'}), 400
+
+    try:
+        result = admin_backup_keys(current_admin.user_id, backup_password, backup_location)
+        return jsonify(result), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@admin_bp.route('/keys/restore', methods=['POST'])
+@admin_required
+def api_restore_keys(current_admin):
+    """
+    从备份恢复密钥
+    POST /admin/keys/restore
+    JSON body: {"backup_file": "/path/to/backup.enc", "backup_password": "your_strong_password"}
+    """
+    data = request.json or {}
+    backup_file = data.get('backup_file')
+    backup_password = data.get('backup_password')
+
+    if not backup_file or not backup_password:
+        return jsonify({'error': 'Backup file and password are required'}), 400
+
+    try:
+        result = admin_restore_keys(current_admin.user_id, backup_file, backup_password)
+        return jsonify(result), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@admin_bp.route('/keys/rotate', methods=['POST'])
+@admin_required
+def api_rotate_key(current_admin):
+    """
+    轮换指定密钥
+    POST /admin/keys/rotate
+    JSON body: {"key_id": 123, "key_type": "symmetric", "expiry_days": 30}
+    """
+    data = request.json or {}
+    key_id = data.get('key_id')
+    key_type = data.get('key_type', 'symmetric')
+    expiry_days = data.get('expiry_days', 30)
+
+    if not key_id:
+        return jsonify({'error': 'Key ID is required'}), 400
+
+    try:
+        result = admin_rotate_key(current_admin.user_id, key_id, key_type, expiry_days)
+        return jsonify({
+            'message': 'Key rotated successfully',
+            'new_key_data': result
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
 
 @admin_bp.route('/keys/new_rsa', methods=['POST'])
-# @admin_required
-def api_generate_new_rsa():
+@admin_required
+def api_generate_new_rsa(current_admin):
     """
-    生成新密钥
-    POST /admin/keys/new
-    JSON body: {"password": "myBank"}
+    生成新的RSA密钥对
+    POST /admin/keys/new_rsa
     """
     try:
-        generate_rsa_key()
+        result = generate_rsa_key(current_admin.user_id)
         return jsonify({
-            'message': 'Key generated',
+            'message': 'RSA key pair generated successfully',
+            'details': result
         }), 201
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 
 
 @admin_bp.route('/keys/new_aes', methods=['POST'])
-#@admin_required
-def api_generate_new_aes():
+@admin_required
+def api_generate_new_aes(current_admin):
     """
-    生成新密钥
-    POST /admin/keys/new
-    JSON body: {"key_type": "symmetric", "expiry_days": 30}
+    生成新的AES密钥
+    POST /admin/keys/new_aes
+    JSON body: {"key_name": "user_info", "key_type": "symmetric", "key_version": "v2", "expiry_days": 30}
     """
     data = request.json or {}
     key_name = data.get('key_name')
-    key_type = data.get('key_type')
-    expiry_days = data.get('expiry_days')
-    key_version = data.get('key_version')
+    key_type = data.get('key_type', 'symmetric')
+    key_version = data.get('key_version', 'v1')
+    expiry_days = data.get('expiry_days', 30)
+
+    if not key_name:
+        return jsonify({'error': 'Key name is required'}), 400
 
     try:
-        key_obj = generate_aes_key(key_name, key_type, key_version, expiry_days)
+        key_data = generate_aes_key(key_name, key_type, key_version, expiry_days, current_admin.user_id)
         return jsonify({
-            'message': 'Key generated',
-            'key_name': key_obj["key_name"],
-            'key_id': key_obj["key_id"],
-            'key_version': key_obj["key_version"],
-            'key_type': key_obj["key_type"],
-            'expiry_date': key_obj["expiry_date"]
+            'message': 'AES key generated successfully',
+            'key_data': key_data
         }), 201
     except Exception as e:
         return jsonify({'error': str(e)}), 400
@@ -182,50 +232,54 @@ def api_rotate_key(current_admin):
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 
-@admin_bp.route('/security_logs', methods=['GET'])
+
+@admin_bp.route('/security/logs', methods=['GET'])
 @admin_required
-def api_view_security_logs(current_admin):
-    """
-    查看安全日志
-    GET /admin/security_logs?limit=50
-    """
+def get_security_logs_api(current_admin):
     limit = request.args.get('limit', 50, type=int)
+    offset = request.args.get('offset', 0, type=int)
+    event_type = request.args.get('event_type')
+    user_id = request.args.get('user_id', type=int)
+
     try:
-        logs = view_security_logs(current_admin, limit)
-        return jsonify({'security_logs': logs}), 200
+        logs = get_security_logs(
+            current_admin.user_id,
+            limit=limit,
+            offset=offset,
+            event_type=event_type,
+            user_id=user_id
+        )
+        return jsonify({'logs': logs}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 
 
-@admin_bp.route('/backup', methods=['POST'])
+@admin_bp.route('/user/<int:user_id>/security', methods=['POST'])
 @admin_required
-def api_perform_system_backup(current_admin):
-    """
-    执行系统备份
-    POST /admin/backup
-    JSON body: {"backup_destination": "/path/to/backup"}
-    """
+def admin_manage_user_security(current_admin, user_id):
     data = request.json or {}
-    backup_destination = data.get('backup_destination', "/default/backup/path")
-    try:
-        result_msg = perform_system_backup(current_admin, backup_destination)
-        return jsonify({'message': result_msg}), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
+    action = data.get('action')
 
+    if action == 'reset_totp':
+        try:
+            new_totp_secret = reset_totp(user_id, current_admin.user_id)
+            return jsonify({
+                'message': 'User TOTP reset successfully',
+                'user_id': user_id,
+                'totp_secret': new_totp_secret
+            }), 200
+        except Exception as e:
+            return jsonify({'error': str(e)}), 400
 
-@admin_bp.route('/patch', methods=['POST'])
-@admin_required
-def api_apply_system_patch(current_admin):
-    """
-    应用系统补丁
-    POST /admin/patch
-    JSON body: {"patch_info": "Patch v1.2.3"}
-    """
-    data = request.json or {}
-    patch_info = data.get('patch_info', "Unknown patch")
-    try:
-        result_msg = apply_system_patch(current_admin, patch_info)
-        return jsonify({'message': result_msg}), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
+    elif action == 'require_password_change':
+        try:
+            result = require_password_change(user_id, current_admin.user_id)
+            return jsonify({
+                'message': 'User will be required to change password on next login',
+                'user_id': user_id
+            }), 200
+        except Exception as e:
+            return jsonify({'error': str(e)}), 400
+
+    else:
+        return jsonify({'error': 'Invalid action'}), 400

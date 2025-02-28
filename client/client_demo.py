@@ -1,24 +1,41 @@
 import base64
 import time
 import requests
+import getpass
+import pyotp
+import os
 from security.sign_verify import sign_data
 from security.encryption import generate_rsa_keypair, serialize_private_key_to_pem, serialize_public_key_to_pem, \
     compute_hmac_sha256
 
 
+def ensure_directory(directory):
+    """确保目录存在"""
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
+
 def user_register(name: str, email: str, password: str, phone: str, address: str):
-    # 1. 生成本地RSA密钥对 (演示)
+    """注册新用户"""
+    print("\n=== 注册新用户 ===")
+
+    # 确保存储目录存在
+    ensure_directory("user_secret")
+
+    # 1. 生成本地RSA密钥对
+    print("生成RSA密钥对...")
     private_key, public_key = generate_rsa_keypair()
     private_pem = serialize_private_key_to_pem(private_key)
     public_pem = serialize_public_key_to_pem(public_key)
 
-    # 保存私钥到文件（以二进制模式写入）
+    # 保存私钥到文件
     safe_email = email.replace("@", "_at_").replace(".", "_dot_")
     with open(f"user_secret/{safe_email}_private_key.pem", "wb") as private_file:
         private_file.write(private_pem)
         private_file.close()
+    print(f"私钥已保存到 user_secret/{safe_email}_private_key.pem")
 
-    # 4. 构造请求体
+    # 2. 构造请求体
     payload = {
         "name": name,
         "address": address,
@@ -28,38 +45,61 @@ def user_register(name: str, email: str, password: str, phone: str, address: str
         "public_key": base64.b64encode(public_pem).decode()
     }
 
-    # 5. 向HTTPS服务器发起POST请求
+    # 3. 发送注册请求
+    print("发送注册请求...")
     url = "https://127.0.0.1:5001/client/register"
-    # 因为是自签名证书，需要用 verify=False 或指定证书
     resp = requests.post(url, json=payload, verify=False)
-    resp_data = resp.json()
-    totp_secret = resp_data.get("totp_secret")
-    hamc_key = resp_data.get("hamc_key")
-    if totp_secret:
-        # 把 totp_secret 写入本地文件
-        with open(f"user_secret/{safe_email}_totp_secret.txt", "w") as f:
-            f.write(totp_secret)
-        print("TOTP secret saved to totp_secret.txt")
+    print(f"服务器响应: {resp.status_code}")
+
+    if resp.status_code == 201:
+        resp_data = resp.json()
+        totp_secret = resp_data.get("totp_secret")
+        hmac_key = resp_data.get("hmac_key")
+
+        # 保存TOTP密钥
+        if totp_secret:
+            with open(f"user_secret/{safe_email}_totp_secret.txt", "w") as f:
+                f.write(totp_secret)
+            print(f"TOTP密钥已保存到 user_secret/{safe_email}_totp_secret.txt")
+
+            # 显示TOTP二维码URL
+            totp_uri = pyotp.totp.TOTP(totp_secret).provisioning_uri(
+                name=email, issuer_name="MyBank")
+            print(f"TOTP URI: {totp_uri}")
+            print("请使用Google Authenticator或其他TOTP应用扫描此URI以设置双因素认证")
+
+        # 保存HMAC密钥
+        if hmac_key:
+            with open(f"user_secret/{safe_email}_hmac_key.txt", "w") as f:
+                f.write(hmac_key)
+            print(f"HMAC密钥已保存到 user_secret/{safe_email}_hmac_key.txt")
+
+        print("注册成功！请妥善保管您的密钥文件，不要透露给他人。")
     else:
-        print("No totp_secret found in response.")
-    if hamc_key:
-        # 把 hamc_key 写入本地文件
-        with open(f"user_secret/{safe_email}_hamc_key.txt", "w") as f:
-            f.write(hamc_key)
-        print("HMAC_key saved to hamc_key.txt")
-    print(resp)
+        print(f"注册失败: {resp.text}")
 
 
 def user_login(email: str, password: str):
+    """用户登录"""
+    print("\n=== 用户登录 ===")
+
+    # 1. 构造签名消息
     timestamp = int(time.time())
     message = f"login|email={email}|timestamp={timestamp}"
 
+    # 2. 读取私钥文件并签名
     safe_email = email.replace("@", "_at_").replace(".", "_dot_")
-    with open(f"user_secret/{safe_email}_private_key.pem", "rb") as private_file:
-        private_pem = private_file.read()
+    try:
+        with open(f"user_secret/{safe_email}_private_key.pem", "rb") as private_file:
+            private_pem = private_file.read()
+    except FileNotFoundError:
+        print(f"错误: 找不到私钥文件 user_secret/{safe_email}_private_key.pem")
+        return None
+
     signature_bytes = sign_data(message.encode('utf-8'), private_pem)
     signature_hex = signature_bytes.hex()
 
+    # 3. 构造请求体
     payload = {
         "message": message,
         "signature": signature_hex,
@@ -67,282 +107,635 @@ def user_login(email: str, password: str):
         "password": password
     }
 
+    # 4. 发送登录请求
+    print("发送登录请求...")
     url = "https://127.0.0.1:5001/client/login"
     resp = requests.post(url, json=payload, verify=False)
-    print("Login Response:", resp.status_code, resp.text)
-    return resp
+    print(f"服务器响应: {resp.status_code}")
+
+    if resp.status_code == 200:
+        token = resp.json().get("token")
+        print("登录成功！")
+        return token
+    else:
+        print(f"登录失败: {resp.text}")
+        return None
 
 
 def user_logout(token: str):
+    """用户登出"""
+    print("\n=== 用户登出 ===")
+
     url = "https://127.0.0.1:5001/client/logout"
     headers = {
         "Authorization": f"Bearer {token}"
     }
+
+    print("发送登出请求...")
     resp = requests.post(url, headers=headers, json={}, verify=False)
-    print("Logout Response:", resp.status_code, resp.text)
-    return resp
+    print(f"服务器响应: {resp.status_code}")
+
+    if resp.status_code == 200:
+        print("登出成功！")
+        return True
+    else:
+        print(f"登出失败: {resp.text}")
+        return False
 
 
-def user_create_account(email, account_type: str, token: str):
+def user_create_account(email: str, account_type: str, token: str):
+    """创建新账户"""
+    print("\n=== 创建新账户 ===")
+
+    # 1. 构造签名消息
     timestamp = int(time.time())
     message = f"create_account|email={email}|account_type={account_type}|timestamp={timestamp}"
 
+    # 2. 读取私钥和HMAC密钥
     safe_email = email.replace("@", "_at_").replace(".", "_dot_")
-    with open(f"user_secret/{safe_email}_private_key.pem", "rb") as private_file:
-        private_pem = private_file.read()
+    try:
+        with open(f"user_secret/{safe_email}_private_key.pem", "rb") as private_file:
+            private_pem = private_file.read()
+
+        with open(f"user_secret/{safe_email}_hmac_key.txt", "rb") as hmac_file:
+            hmac_key = hmac_file.read()
+    except FileNotFoundError as e:
+        print(f"错误: 找不到密钥文件 - {str(e)}")
+        return None
+
+    # 3. 生成签名和HMAC
     signature_bytes = sign_data(message.encode('utf-8'), private_pem)
     signature_hex = signature_bytes.hex()
+    hmac_value = compute_hmac_sha256(message.encode('utf-8'), hmac_key)
 
-    payload = {
-        "message": message,
-        "signature": signature_hex
-    }
-
-    headers = {
-        "Authorization": f"Bearer {token}"
-    }
-
-    url = "https://127.0.0.1:5001/client/account/create_account"
-    resp = requests.post(url, json=payload, headers=headers, verify=False)
-    print("Status code:", resp.status_code)
-    print("Response:", resp.text)
-    return resp
-
-
-def user_deposit(account_number, amount, token):
-    timestamp = int(time.time())
-    message = f"create_account|email={email}|account_number={account_number}|amount={amount}|timestamp={timestamp}"
-
-    safe_email = email.replace("@", "_at_").replace(".", "_dot_")
-    with open(f"user_secret/{safe_email}_private_key.pem", "rb") as private_file:
-        private_pem = private_file.read()
-    signature_bytes = sign_data(message.encode('utf-8'), private_pem)
-    signature_hex = signature_bytes.hex()
-
-    with open(f"user_secret/{safe_email}_hmac_key.txt", "rb") as f:
-        hmac_key = f.read()
-        hmac_value = compute_hmac_sha256(message.encode('utf-8'), hmac_key)
-
+    # 4. 构造请求体
     payload = {
         "message": message,
         "signature": signature_hex,
         "hmac": hmac_value
     }
 
+    # 5. 发送请求
     headers = {
         "Authorization": f"Bearer {token}"
     }
 
+    print("发送创建账户请求...")
+    url = "https://127.0.0.1:5001/client/account/create"
+    resp = requests.post(url, json=payload, headers=headers, verify=False)
+    print(f"服务器响应: {resp.status_code}")
+
+    if resp.status_code == 201:
+        data = resp.json()
+        account_number = data.get("account_number")
+        print(f"账户创建成功! 账号: {account_number}")
+        return account_number
+    else:
+        print(f"创建账户失败: {resp.text}")
+        return None
+
+
+def user_deposit(email: str, account_number: str, amount: str, token: str):
+    """存款操作"""
+    print(f"\n=== 存款 {amount} 到账户 {account_number} ===")
+
+    # 1. 构造签名消息
+    timestamp = int(time.time())
+    message = f"deposit|email={email}|account_number={account_number}|amount={amount}|timestamp={timestamp}"
+
+    # 2. 读取私钥和HMAC密钥
+    safe_email = email.replace("@", "_at_").replace(".", "_dot_")
+    try:
+        with open(f"user_secret/{safe_email}_private_key.pem", "rb") as private_file:
+            private_pem = private_file.read()
+
+        with open(f"user_secret/{safe_email}_hmac_key.txt", "rb") as hmac_file:
+            hmac_key = hmac_file.read()
+    except FileNotFoundError as e:
+        print(f"错误: 找不到密钥文件 - {str(e)}")
+        return None
+
+    # 3. 生成签名和HMAC
+    signature_bytes = sign_data(message.encode('utf-8'), private_pem)
+    signature_hex = signature_bytes.hex()
+    hmac_value = compute_hmac_sha256(message.encode('utf-8'), hmac_key)
+
+    # 4. 构造请求体
+    payload = {
+        "message": message,
+        "signature": signature_hex,
+        "hmac": hmac_value
+    }
+
+    # 5. 发送请求
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    print("发送存款请求...")
     url = "https://127.0.0.1:5001/client/transaction/deposit"
     resp = requests.post(url, json=payload, headers=headers, verify=False)
-    print("Status code:", resp.status_code)
-    print("Response:", resp.text)
-    return resp
+    print(f"服务器响应: {resp.status_code}")
+
+    if resp.status_code == 200:
+        data = resp.json()
+        transaction_id = data.get("transaction_id")
+        balance = data.get("balance")
+        print(f"存款成功! 交易ID: {transaction_id}")
+        print(f"当前余额: {balance}")
+        return transaction_id, balance
+    else:
+        print(f"存款失败: {resp.text}")
+        return None, None
 
 
-def user_withdraw(account_number, amount, token):
+def user_withdraw(email: str, account_number: str, amount: str, token: str):
+    """取款操作"""
+    print(f"\n=== 从账户 {account_number} 取款 {amount} ===")
+
+    # 1. 构造签名消息
     timestamp = int(time.time())
-    message = f"create_account|email={email}|account_number={account_number}|amount={amount}|timestamp={timestamp}"
+    message = f"withdraw|email={email}|account_number={account_number}|amount={amount}|timestamp={timestamp}"
 
+    # 2. 读取私钥和HMAC密钥
     safe_email = email.replace("@", "_at_").replace(".", "_dot_")
-    with open(f"user_secret/{safe_email}_private_key.pem", "rb") as private_file:
-        private_pem = private_file.read()
+    try:
+        with open(f"user_secret/{safe_email}_private_key.pem", "rb") as private_file:
+            private_pem = private_file.read()
+
+        with open(f"user_secret/{safe_email}_hmac_key.txt", "rb") as hmac_file:
+            hmac_key = hmac_file.read()
+    except FileNotFoundError as e:
+        print(f"错误: 找不到密钥文件 - {str(e)}")
+        return None
+
+    # 3. 生成签名和HMAC
     signature_bytes = sign_data(message.encode('utf-8'), private_pem)
     signature_hex = signature_bytes.hex()
+    hmac_value = compute_hmac_sha256(message.encode('utf-8'), hmac_key)
 
-    with open(f"user_secret/{safe_email}_hmac_key.txt", "rb") as f:
-        hmac_key = f.read()
-        hmac_value = compute_hmac_sha256(message.encode('utf-8'), hmac_key)
-
+    # 4. 构造请求体
     payload = {
         "message": message,
         "signature": signature_hex,
         "hmac": hmac_value
     }
 
+    # 5. 发送请求
     headers = {
         "Authorization": f"Bearer {token}"
     }
 
+    print("发送取款请求...")
     url = "https://127.0.0.1:5001/client/transaction/withdraw"
     resp = requests.post(url, json=payload, headers=headers, verify=False)
-    print("Status code:", resp.status_code)
-    print("Response:", resp.text)
-    return resp
+    print(f"服务器响应: {resp.status_code}")
+
+    if resp.status_code == 200:
+        data = resp.json()
+        transaction_id = data.get("transaction_id")
+        balance = data.get("balance")
+        print(f"取款成功! 交易ID: {transaction_id}")
+        print(f"当前余额: {balance}")
+        return transaction_id, balance
+    else:
+        print(f"取款失败: {resp.text}")
+        return None, None
 
 
-def user_transfer(source_account_number, destination_account_number, amount, token):
+def user_transfer(email: str, source_account_number: str, destination_account_number: str, amount: str, token: str):
+    """转账操作"""
+    print(f"\n=== 从账户 {source_account_number} 转账 {amount} 到账户 {destination_account_number} ===")
+
+    # 1. 构造签名消息
     timestamp = int(time.time())
-    message = f"create_account|email={email}|source_account_number={source_account_number}|destination_account_number={destination_account_number}|amount={amount}|timestamp={timestamp}"
+    message = f"transfer|email={email}|source_account_number={source_account_number}|destination_account_number={destination_account_number}|amount={amount}|timestamp={timestamp}"
 
+    # 2. 读取私钥和HMAC密钥
     safe_email = email.replace("@", "_at_").replace(".", "_dot_")
-    with open(f"user_secret/{safe_email}_private_key.pem", "rb") as private_file:
-        private_pem = private_file.read()
+    try:
+        with open(f"user_secret/{safe_email}_private_key.pem", "rb") as private_file:
+            private_pem = private_file.read()
+
+        with open(f"user_secret/{safe_email}_hmac_key.txt", "rb") as hmac_file:
+            hmac_key = hmac_file.read()
+
+        with open(f"user_secret/{safe_email}_totp_secret.txt", "r") as totp_file:
+            totp_secret = totp_file.read().strip()
+    except FileNotFoundError as e:
+        print(f"错误: 找不到密钥文件 - {str(e)}")
+        return None
+
+    # 3. 生成签名和HMAC
     signature_bytes = sign_data(message.encode('utf-8'), private_pem)
     signature_hex = signature_bytes.hex()
+    hmac_value = compute_hmac_sha256(message.encode('utf-8'), hmac_key)
 
-    with open(f"user_secret/{safe_email}_hmac_key.txt", "rb") as f:
-        hmac_key = f.read()
-        hmac_value = compute_hmac_sha256(message.encode('utf-8'), hmac_key)
-
+    # 4. 构造请求体
     payload = {
         "message": message,
         "signature": signature_hex,
         "hmac": hmac_value
     }
 
+    # 5. 发送请求
     headers = {
         "Authorization": f"Bearer {token}"
     }
 
+    print("发送转账请求...")
     url = "https://127.0.0.1:5001/client/transaction/transfer"
     resp = requests.post(url, json=payload, headers=headers, verify=False)
-    print("Status code:", resp.status_code)
-    print("Response:", resp.text)
-    return resp
+    print(f"服务器响应: {resp.status_code}")
+
+    # 检查是否需要额外验证（高风险交易）
+    if resp.status_code == 428:  # 请求需要额外验证
+        print("高风险交易，需要额外验证...")
+
+        # 生成当前TOTP码
+        totp = pyotp.TOTP(totp_secret)
+        current_totp = totp.now()
+        print(f"当前TOTP码: {current_totp}")
+
+        verification_code = input("请输入您的身份验证器应用中的验证码: ")
+
+        # 添加验证码并重新请求
+        payload["verification_code"] = verification_code
+        resp = requests.post(url, json=payload, headers=headers, verify=False)
+        print(f"验证后服务器响应: {resp.status_code}")
+
+    if resp.status_code == 200:
+        data = resp.json()
+        transaction_id = data.get("transaction_id")
+        balance = data.get("balance")
+        print(f"转账成功! 交易ID: {transaction_id}")
+        print(f"当前余额: {balance}")
+        return transaction_id, balance
+    else:
+        print(f"转账失败: {resp.text}")
+        return None, None
 
 
-def client_send_message(employee_id: int, message_text: str, token: str):
-    """
-    客户端调用此函数向银行职员发送一条安全消息
-    :param token: 登录后获得的会话Token
-    :param client_email: 当前客户端用户的email, 用于拼接私钥和hmac_key文件名
-    :param employee_id: 接收者(银行职员)的 user_id
-    :param message_text: 要发送的明文内容
-    """
+def client_send_message(email: str, employee_id: int, message_text: str, token: str):
+    """向银行职员发送加密消息"""
+    print(f"\n=== 向员工 {employee_id} 发送加密消息 ===")
 
+    # 1. 构造签名消息
     timestamp = int(time.time())
-    # 这里构造需要签名/HMAC的字符串, 例如:
     message_str = f"send_message|email={email}|to={employee_id}|content={message_text}|timestamp={timestamp}"
 
-    # 1) 读取客户端私钥 (用于数字签名)
+    # 2. 读取私钥和HMAC密钥
     safe_email = email.replace("@", "_at_").replace(".", "_dot_")
-    with open(f"user_secret/{safe_email}_private_key.pem", "rb") as f:
-        private_key_pem = f.read()
-    signature_bytes = sign_data(message_str.encode('utf-8'), private_key_pem)
-    signature_hex = signature_bytes.hex()
+    try:
+        with open(f"user_secret/{safe_email}_private_key.pem", "rb") as private_file:
+            private_pem = private_file.read()
 
-    # 2) 读取客户端的 HMAC 密钥 (若要同时用HMAC做完整性)
-    with open(f"user_secret/{safe_email}_hmac_key.txt", "rb") as f:
-        hmac_key = f.read()
+        with open(f"user_secret/{safe_email}_hmac_key.txt", "rb") as hmac_file:
+            hmac_key = hmac_file.read()
+    except FileNotFoundError as e:
+        print(f"错误: 找不到密钥文件 - {str(e)}")
+        return None
+
+    # 3. 生成签名和HMAC
+    signature_bytes = sign_data(message_str.encode('utf-8'), private_pem)
+    signature_hex = signature_bytes.hex()
     hmac_value = compute_hmac_sha256(message_str.encode('utf-8'), hmac_key)
 
-    # 3) 构造请求载荷
+    # 4. 构造请求体
     payload = {
         "message": message_str,
         "signature": signature_hex,
         "hmac": hmac_value
     }
 
-    # 4) 携带 Token
+    # 5. 发送请求
     headers = {
         "Authorization": f"Bearer {token}"
     }
 
-    # 5) 发送请求
-    url = "https://127.0.0.1:5001/client/messages/send"
+    print("发送加密消息...")
+    url = "https://127.0.0.1:5001/client/message/send"
     resp = requests.post(url, json=payload, headers=headers, verify=False)
-    print("SendMessage Response:", resp.status_code, resp.text)
-    return resp
+    print(f"服务器响应: {resp.status_code}")
 
-
-def client_read_messages(token: str):
-    """
-    客户端函数：读取 target_user_id 的全部消息（区分已读/未读）
-    """
-    timestamp = int(time.time())
-    message_str = f"read_message|email={email}|timestamp={timestamp}"
-
-    # 读取本地私钥 & 生成签名
-    safe_email = email.replace("@", "_at_").replace(".", "_dot_")
-    with open(f"user_secret/{safe_email}_private_key.pem", "rb") as f:
-        private_key_pem = f.read()
-    signature_bytes = sign_data(message_str.encode('utf-8'), private_key_pem)
-    signature_hex = signature_bytes.hex()
-
-    # 读取 HMAC 密钥 & 生成 HMAC
-    with open(f"user_secret/{safe_email}_hmac_key.txt", "rb") as f:
-        hmac_key = f.read()
-    hmac_value = compute_hmac_sha256(message_str.encode('utf-8'), hmac_key)
-
-    payload = {
-        "message": message_str,
-        "signature": signature_hex,
-        "hmac": hmac_value
-    }
-
-    headers = {
-        "Authorization": f"Bearer {token}"
-    }
-
-    url = "https://127.0.0.1:5001/client/message/read"
-    resp = requests.post(url, json=payload, headers=headers, verify=False)
     if resp.status_code == 200:
-        # 4) 解析返回的JSON
         data = resp.json()
-        unread_list = data.get("unread_messages", [])
-        read_list = data.get("read_messages", [])
-        print("===== Unread Messages =====")
-        for msg in unread_list:
-            print(f"Sender: {msg['sender_id']}, "
-                  f"Content: {msg['content']}, ")
+        message_id = data.get("message_id")
+        print(f"消息发送成功! 消息ID: {message_id}")
+        return message_id
+    else:
+        print(f"消息发送失败: {resp.text}")
+        return None
 
-        print("===== Read Messages =====")
-        for msg in read_list:
-            print(f"Sender: {msg['sender_id']}, "
-                  f"Content: {msg['content']}, ")
-    return resp
 
+def get_account_info(token: str, account_id: int):
+    """获取账户信息"""
+    print(f"\n=== 获取账户 {account_id} 信息 ===")
+
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    print("发送请求...")
+    url = f"https://127.0.0.1:5001/client/account/{account_id}/info"
+    resp = requests.get(url, headers=headers, verify=False)
+    print(f"服务器响应: {resp.status_code}")
+
+    if resp.status_code == 200:
+        info = resp.json()
+        print("账户信息:")
+        for key, value in info.items():
+            print(f"  {key}: {value}")
+        return info
+    else:
+        print(f"获取账户信息失败: {resp.text}")
+        return None
+
+
+def get_transaction_history(token: str, account_id: int):
+    """获取交易历史"""
+    print(f"\n=== 获取账户 {account_id} 交易历史 ===")
+
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    print("发送请求...")
+    url = f"https://127.0.0.1:5001/client/account/{account_id}/transactions"
+    resp = requests.get(url, headers=headers, verify=False)
+    print(f"服务器响应: {resp.status_code}")
+
+    if resp.status_code == 200:
+        transactions = resp.json().get("transactions", [])
+        print(f"找到 {len(transactions)} 条交易记录:")
+        for idx, tx in enumerate(transactions, 1):
+            print(f"\n交易 #{idx}:")
+            for key, value in tx.items():
+                print(f"  {key}: {value}")
+        return transactions
+    else:
+        print(f"获取交易历史失败: {resp.text}")
+        return None
+
+
+def change_password(token: str, current_password: str, new_password: str):
+    """更改密码"""
+    print("\n=== 更改密码 ===")
+
+    payload = {
+        "action": "change_password",
+        "current_password": current_password,
+        "new_password": new_password
+    }
+
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    print("发送密码更改请求...")
+    url = "https://127.0.0.1:5001/client/security"
+    resp = requests.post(url, json=payload, headers=headers, verify=False)
+    print(f"服务器响应: {resp.status_code}")
+
+    if resp.status_code == 200:
+        print("密码更改成功!")
+        return True
+    else:
+        print(f"密码更改失败: {resp.text}")
+        return False
+
+
+def reset_totp(token: str, email: str):
+    """重置TOTP"""
+    print("\n=== 重置TOTP ===")
+
+    payload = {
+        "action": "reset_totp"
+    }
+
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    print("发送TOTP重置请求...")
+    url = "https://127.0.0.1:5001/client/security"
+    resp = requests.post(url, json=payload, headers=headers, verify=False)
+    print(f"服务器响应: {resp.status_code}")
+
+    if resp.status_code == 200:
+        data = resp.json()
+        new_totp_secret = data.get("totp_secret")
+
+        # 保存新的TOTP密钥
+        safe_email = email.replace("@", "_at_").replace(".", "_dot_")
+        with open(f"user_secret/{safe_email}_totp_secret.txt", "w") as f:
+            f.write(new_totp_secret)
+
+        # 显示TOTP二维码URL
+        totp_uri = pyotp.totp.TOTP(new_totp_secret).provisioning_uri(
+            name=email, issuer_name="MyBank")
+
+        print("TOTP重置成功!")
+        print(f"新的TOTP密钥已保存到 user_secret/{safe_email}_totp_secret.txt")
+        print(f"TOTP URI: {totp_uri}")
+        print("请使用Google Authenticator或其他TOTP应用扫描此URI以更新您的双因素认证")
+
+        return True
+    else:
+        print(f"TOTP重置失败: {resp.text}")
+        return False
+
+
+def get_audit_logs(token: str):
+    """获取审计日志"""
+    print("\n=== 获取审计日志 ===")
+
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    print("发送请求...")
+    url = "https://127.0.0.1:5001/client/audit/logs"
+    resp = requests.get(url, headers=headers, verify=False)
+    print(f"服务器响应: {resp.status_code}")
+
+    if resp.status_code == 200:
+        logs = resp.json().get("logs", [])
+        print(f"找到 {len(logs)} 条审计日志记录:")
+        for idx, log in enumerate(logs, 1):
+            print(f"\n日志 #{idx}:")
+            print(f"  操作: {log.get('operation')}")
+            print(f"  详情: {log.get('details')}")
+            print(f"  时间: {log.get('log_time')}")
+        return logs
+    else:
+        print(f"获取审计日志失败: {resp.text}")
+        return None
+
+
+def update_profile(token: str, phone: str = None, address: str = None):
+    """更新个人资料"""
+    print("\n=== 更新个人资料 ===")
+
+    payload = {}
+    if phone:
+        payload["phone"] = phone
+    if address:
+        payload["address"] = address
+
+    if not payload:
+        print("错误: 至少需要提供一个要更新的字段")
+        return False
+
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    print("发送个人资料更新请求...")
+    url = "https://127.0.0.1:5001/client/profile/update"
+    resp = requests.post(url, json=payload, headers=headers, verify=False)
+    print(f"服务器响应: {resp.status_code}")
+
+    if resp.status_code == 200:
+        print("个人资料更新成功!")
+        return True
+    else:
+        print(f"个人资料更新失败: {resp.text}")
+        return False
 
 
 if __name__ == "__main__":
-    print("==================== Welcome to myBank System! ====================")
-    print("Please login if you have an account or register an account.")
-    user_choice = input("Please enter your choice: 1. Register, 2. Login")
-    if user_choice == "1":
-        name = input("Enter your name: ")
-        email = input("Enter your email address: ")
-        password = input("Enter your password: ")
-        phone = input("Enter your phone number: ")
-        address = input("Enter your address: ")
-        user_register(name, email, password, phone, address)
+    print("==================== 欢迎使用MyBank客户端 ====================")
 
-    elif user_choice == "2":
-        email = input("Enter your email address: ")
-        password = input("Enter your password: ")
-        resp = user_login(email, password)
-        token = resp.json()["token"]
+    while True:
+        print("\n选择操作:")
+        print("1. 注册新账户")
+        print("2. 登录")
+        print("0. 退出")
 
-        while (1):
-            print("Please enter the business you want to handle: ")
-            print("1.Create account 2.Deposit 3.Withdraw 4.Transfer 5.Contact the customer service 6. Logout")
-            service = input("Enter your service: ")
-            if service == "1":
-                account_type = input("Enter your account type: ")
-                resp = user_create_account(email, account_type, token)
+        main_choice = input("请输入选项: ")
 
-            elif service == "2":
-                account_number = input("Enter your account number: ")
-                amount = input("Enter your amount: ")
-                resp = user_deposit(account_number, amount, token)
+        if main_choice == "1":
+            # 注册新账户
+            name = input("请输入姓名: ")
+            email = input("请输入电子邮箱: ")
+            password = getpass.getpass("请输入密码: ")
+            phone = input("请输入电话号码: ")
+            address = input("请输入地址: ")
 
-            elif service == "3":
-                account_number = input("Enter your account number: ")
-                amount = input("Enter your amount: ")
-                resp = user_withdraw(account_number, amount, token)
+            user_register(name, email, password, phone, address)
 
-            elif service == "4":
-                source_account_number = input("Enter your source account number: ")
-                target_account_number = input("Enter your target account number: ")
-                amount = input("Enter your amount: ")
-                resp = user_transfer(source_account_number, target_account_number, amount, token)
+        elif main_choice == "2":
+            # 登录
+            email = input("请输入电子邮箱: ")
+            password = getpass.getpass("请输入密码: ")
 
-            elif service == "5":
-                resp = client_read_messages(token)
-                employee_id = input("Enter the employee ID who you want to send message to: ")
-                message = input("Enter your message: ")
-                resp_1 = client_send_message(int(employee_id), message, token)
+            token = user_login(email, password)
 
-            else:
-                resp = user_logout(token)
-                break
+            if token:
+                # 登录成功，显示功能菜单
+                while True:
+                    print("\n--- 用户功能菜单 ---")
+                    print("1. 创建新账户")
+                    print("2. 存款")
+                    print("3. 取款")
+                    print("4. 转账")
+                    print("5. 查看账户信息")
+                    print("6. 查看交易历史")
+                    print("7. 发送加密消息给银行职员")
+                    print("8. 安全设置")
+                    print("9. 查看审计日志")
+                    print("10. 更新个人资料")
+                    print("0. 登出")
+
+                    sub_choice = input("请输入选项: ")
+
+                    if sub_choice == "1":
+                        # 创建新账户
+                        account_type = input("请输入账户类型 (savings/checking): ")
+                        user_create_account(email, account_type, token)
+
+                    elif sub_choice == "2":
+                        # 存款
+                        account_number = input("请输入账号: ")
+                        amount = input("请输入金额: ")
+                        user_deposit(email, account_number, amount, token)
+
+                    elif sub_choice == "3":
+                        # 取款
+                        account_number = input("请输入账号: ")
+                        amount = input("请输入金额: ")
+                        user_withdraw(email, account_number, amount, token)
+
+                    elif sub_choice == "4":
+                        # 转账
+                        source_account = input("请输入源账号: ")
+                        destination_account = input("请输入目标账号: ")
+                        amount = input("请输入金额: ")
+                        user_transfer(email, source_account, destination_account, amount, token)
+
+                    elif sub_choice == "5":
+                        # 查看账户信息
+                        account_id = int(input("请输入账户ID: "))
+                        get_account_info(token, account_id)
+
+                    elif sub_choice == "6":
+                        # 查看交易历史
+                        account_id = int(input("请输入账户ID: "))
+                        get_transaction_history(token, account_id)
+
+                    elif sub_choice == "7":
+                        # 发送加密消息
+                        employee_id = int(input("请输入银行职员ID: "))
+                        message = input("请输入消息内容: ")
+                        client_send_message(email, employee_id, message, token)
+
+                    elif sub_choice == "8":
+                        # 安全设置
+                        print("\n安全设置:")
+                        print("1. 更改密码")
+                        print("2. 重置TOTP")
+                        print("0. 返回")
+
+                        security_choice = input("请输入选项: ")
+
+                        if security_choice == "1":
+                            current_password = getpass.getpass("请输入当前密码: ")
+                            new_password = getpass.getpass("请输入新密码: ")
+                            confirm_password = getpass.getpass("请确认新密码: ")
+
+                            if new_password != confirm_password:
+                                print("错误: 两次输入的新密码不匹配")
+                            else:
+                                change_password(token, current_password, new_password)
+
+                        elif security_choice == "2":
+                            reset_totp(token, email)
+
+                    elif sub_choice == "9":
+                        # 查看审计日志
+                        get_audit_logs(token)
+
+                    elif sub_choice == "10":
+                        # 更新个人资料
+                        update_phone = input("请输入新电话号码 (留空保持不变): ")
+                        update_address = input("请输入新地址 (留空保持不变): ")
+
+                        phone = update_phone if update_phone else None
+                        address = update_address if update_address else None
+
+                        update_profile(token, phone, address)
+
+                    elif sub_choice == "0":
+                        # 登出
+                        if user_logout(token):
+                            break
+                    else:
+                        print("无效选项，请重试")
+
+        elif main_choice == "0":
+            print("感谢使用MyBank客户端，再见!")
+            break
+
+        else:
+            print("无效选项，请重试")

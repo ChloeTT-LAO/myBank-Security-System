@@ -3,14 +3,15 @@ from flask import Blueprint, request, jsonify
 from functools import wraps
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
-from authentication import register_user, login, logout, get_session
+from authentication import register_user, login, logout, get_session, change_password, reset_totp
 from config.config import DATABASE_URI
 from security.encryption import verify_hmac_sha256
 from security.sign_verify import verify_signature
-from .loans import apply_for_loan
-from .payments import pay_bill, setup_recurring_payment
-from .account import update_personal_info, get_account_info, get_transactions
+from security.integrity import verify_high_value_transaction, is_high_risk_transaction
+from security.audit import log_operation, get_user_audit_logs
+from .account import update_personal_info, get_account_info, get_transactions, create_account
 from .messages import send_message, read_message
+from .transfer import transfer, deposit, withdraw
 from config.mybank_db import Users, UserSessions, Accounts
 
 client_bp = Blueprint('client_bp', __name__)
@@ -20,9 +21,8 @@ Session = sessionmaker(bind=engine)
 
 def client_required(f):
     """
-    Decorator: Verify whether the Authorization token in the request is valid and ensure that the current user’s role
-    is ‘client’. If the verification is successful, pass the current user object to the decorated route function as
-    the first parameter.
+    装饰器: 验证请求中的Authorization令牌是否有效，并确保当前用户角色为'client'
+    如果验证成功，将当前用户对象作为第一个参数传递给装饰的路由函数
     """
 
     @wraps(f)
@@ -34,6 +34,10 @@ def client_required(f):
             return jsonify({"error": "Missing or invalid Authorization header"}), 401
 
         token = auth_header.replace("Bearer ", "").strip()
+
+        # 获取客户端IP地址和用户代理
+        user_agent = request.headers.get("User-Agent")
+
         session_obj = get_session(token)
         if not session_obj:
             return jsonify({'error': 'Invalid or expired session'}), 401
@@ -41,13 +45,17 @@ def client_required(f):
         user_id = session_obj.user_id
         user = session.query(Users).filter_by(user_id=user_id).first()
         if user.role.value != 'client':
+            # 记录可能的权限越界尝试
+            log_operation(user_id, "unauthorized_access_attempt",
+                          f"User with role {user.role.value} attempted to access client endpoint", user_agent)
             return jsonify({'error': 'Client privileges required'}), 403
+
         return f(user, *args, **kwargs)
 
     return wrapper
 
 
-# client register
+# 客户注册
 @client_bp.route('/register', methods=['POST'])
 def client_register():
     data = request.json or {}
@@ -58,6 +66,10 @@ def client_register():
     password = data.get('password')
     public_key = data.get('public_key')
 
+    # 记录客户端IP和用户代理
+    ip_address = request.remote_addr
+    user_agent = request.headers.get("User-Agent")
+
     if not all([name, email, password]):
         return jsonify({'error': 'Missing required fields'}), 400
 
@@ -65,6 +77,10 @@ def client_register():
         totp_secret = pyotp.random_base32()
 
         user_id, hmac_key = register_user(name, email, password, phone, address, public_key, totp_secret, role='client')
+
+        # 记录成功注册
+        log_operation(user_id, "user_registration", f"New client registered with email {email}", ip_address, user_agent)
+
         return jsonify({
             'message': 'User registered successfully',
             'user_id': user_id,
@@ -76,7 +92,7 @@ def client_register():
         return jsonify({'error': str(e)}), 400
 
 
-# client login
+# 客户登录
 @client_bp.route('/login', methods=['POST'])
 def client_login():
     data = request.json or {}
@@ -85,51 +101,67 @@ def client_login():
     email = data.get('email')
     password = data.get('password')
 
+    # 记录客户端IP和用户代理
+    ip_address = request.remote_addr
+    user_agent = request.headers.get("User-Agent")
+
     is_valid = verify_signature(message, signature_hex)
     if not is_valid:
-        return jsonify({"error": "Signature invalid!"}), 400
+        return jsonify({"error": "Digital signature invalid!"}), 400
 
-    user, token = login(email, password)
+    user, token_or_error = login(email, password, user_agent)
 
     if user:
-        return jsonify({'message': 'Login successful', 'token': token}), 200
+        return jsonify({'message': 'Login successful', 'token': token_or_error}), 200
     else:
-        return jsonify({'error': token}), 401
+        return jsonify({'error': token_or_error}), 401
 
 
-# client logout
+# 客户登出
 @client_bp.route('/logout', methods=['POST'])
 @client_required
 def client_logout(current_client):
     auth_header = request.headers.get("Authorization", "")
     token = auth_header.replace("Bearer ", "").strip()
+
     if logout(token):
         return jsonify({'message': 'Logout successful'}), 200
     else:
         return jsonify({'error': 'Logout failed'}), 400
 
 
-# create account
-@client_bp.route('/account/create_account', methods=['POST'])
+# 创建账户
+@client_bp.route('/account/create', methods=['POST'])
 @client_required
-def client_create_account(current_user):
-    from .account import create_account
-
+def client_create_account_api(current_user):
     data = request.json or {}
     message_str = data.get("message", "")
     signature_hex = data.get("signature", "")
+    hmac_value = data.get("hmac", "")
+
     parts = message_str.split("|")
     email = parts[1].split("=")[1]
     account_type = parts[2].split("=")[1]
 
+    # 验证数字签名
     is_valid = verify_signature(message_str, signature_hex)
     if not is_valid:
-        return jsonify({"error": "Signature invalid!"}), 400
+        return jsonify({"error": "Digital signature invalid!"}), 400
+
+    # 验证消息完整性
+    is_integrity = verify_hmac_sha256(message_str, current_user, hmac_value)
+    if not is_integrity:
+        return jsonify({"error": "Message integrity check failed!"}), 400
 
     try:
         account_number = create_account(current_user.user_id, account_type)
+
+        # 记录操作
+        log_operation(current_user.user_id, "account_creation",
+                      f"Created new account of type {account_type}")
+
         return jsonify({
-            'message': 'User created account successfully',
+            'message': 'Account created successfully',
             'account_number': account_number
         }), 201
 
@@ -137,31 +169,37 @@ def client_create_account(current_user):
         return jsonify({'error': str(e)}), 400
 
 
-# deposit
+# 存款
 @client_bp.route('/transaction/deposit', methods=['POST'])
 @client_required
 def client_deposit(current_user):
-    from .transfer import deposit
-    session = Session()
-
     data = request.json or {}
     message_str = data.get("message", "")
     signature_hex = data.get("signature", "")
     hmac_value = data.get("hmac", "")
+
     parts = message_str.split("|")
     account_number = parts[2].split("=")[1]
     amount = parts[3].split("=")[1]
 
+    # 验证数字签名
     is_valid = verify_signature(message_str, signature_hex)
     if not is_valid:
-        return jsonify({"error": "Signature invalid!"}), 400
+        return jsonify({"error": "Digital signature invalid!"}), 400
 
+    # 验证消息完整性
     is_integrity = verify_hmac_sha256(message_str, current_user, hmac_value)
     if not is_integrity:
-        return jsonify({"error": "Signature invalid!"}), 400
+        return jsonify({"error": "Message integrity check failed!"}), 400
 
     try:
-        transaction_id, balance = deposit(account_number, amount)
+        transaction_id, balance = deposit(account_number, amount, "Deposit", current_user.user_id,
+                                          current_user.hmac_key)
+
+        # 记录操作
+        log_operation(current_user.user_id, "deposit",
+                      f"Deposited {amount} to account {account_number}")
+
         return jsonify({
             'transaction_id': transaction_id,
             'balance': balance
@@ -171,31 +209,37 @@ def client_deposit(current_user):
         return jsonify({'error': str(e)}), 400
 
 
-# withdraw
+# 取款
 @client_bp.route('/transaction/withdraw', methods=['POST'])
 @client_required
 def client_withdraw(current_user):
-    from .transfer import withdraw
-    session = Session()
-
     data = request.json or {}
     message_str = data.get("message", "")
     signature_hex = data.get("signature", "")
     hmac_value = data.get("hmac", "")
+
     parts = message_str.split("|")
     account_number = parts[2].split("=")[1]
     amount = parts[3].split("=")[1]
 
+    # 验证数字签名
     is_valid = verify_signature(message_str, signature_hex)
     if not is_valid:
-        return jsonify({"error": "Signature invalid!"}), 400
+        return jsonify({"error": "Digital signature invalid!"}), 400
 
+    # 验证消息完整性
     is_integrity = verify_hmac_sha256(message_str, current_user, hmac_value)
     if not is_integrity:
-        return jsonify({"error": "Signature invalid!"}), 400
+        return jsonify({"error": "Message integrity check failed!"}), 400
 
     try:
-        transaction_id, balance = withdraw(account_number, amount)
+        transaction_id, balance = withdraw(account_number, amount, "Withdrawal", current_user.user_id,
+                                           current_user.hmac_key)
+
+        # 记录操作
+        log_operation(current_user.user_id, "withdrawal",
+                      f"Withdrew {amount} from account {account_number}")
+
         return jsonify({
             'transaction_id': transaction_id,
             'balance': balance
@@ -205,32 +249,68 @@ def client_withdraw(current_user):
         return jsonify({'error': str(e)}), 400
 
 
-# transfer
+# 转账
 @client_bp.route('/transaction/transfer', methods=['POST'])
 @client_required
 def client_transfer(current_user):
-    from .transfer import transfer
-    session = Session()
-
     data = request.json or {}
     message_str = data.get("message", "")
     signature_hex = data.get("signature", "")
     hmac_value = data.get("hmac", "")
+    verification_code = data.get("verification_code")
+
     parts = message_str.split("|")
     source_account_number = parts[2].split("=")[1]
     destination_account_number = parts[3].split("=")[1]
     amount = parts[4].split("=")[1]
 
+    # 验证数字签名
     is_valid = verify_signature(message_str, signature_hex)
     if not is_valid:
-        return jsonify({"error": "Signature invalid!"}), 400
+        return jsonify({"error": "Digital signature invalid!"}), 400
 
+    # 验证消息完整性
     is_integrity = verify_hmac_sha256(message_str, current_user, hmac_value)
     if not is_integrity:
-        return jsonify({"error": "Signature invalid!"}), 400
+        return jsonify({"error": "Message integrity check failed!"}), 400
+
+    # 构建交易数据
+    transaction_data = {
+        "source_account_number": source_account_number,
+        "destination_account_number": destination_account_number,
+        "amount": amount,
+        "transaction_type": "transfer",
+        "timestamp": None  # 会在transfer函数中设置
+    }
+
+    # 检查是否高风险交易
+    if is_high_risk_transaction(transaction_data) and not verification_code:
+        return jsonify({
+            "error": "Additional verification required for high-value transaction",
+            "requires_verification": True
+        }), 428  # 428 Precondition Required
 
     try:
-        transaction_id, balance = transfer(source_account_number, destination_account_number, amount)
+        result = transfer(
+            source_account_number,
+            destination_account_number,
+            amount,
+            "Transfer",
+            current_user.user_id,
+            current_user.hmac_key,
+            verification_code
+        )
+
+        # 检查是否需要额外验证
+        if isinstance(result, dict) and result.get("status") == "additional_verification_required":
+            return jsonify(result), 428
+
+        transaction_id, balance = result
+
+        # 记录操作
+        log_operation(current_user.user_id, "fund_transfer",
+                      f"Transferred {amount} from {source_account_number} to {destination_account_number}")
+
         return jsonify({
             'transaction_id': transaction_id,
             'balance': balance
@@ -240,7 +320,28 @@ def client_transfer(current_user):
         return jsonify({'error': str(e)}), 400
 
 
-# 与银行代表加密消息通信（发送消息）
+# 高值交易验证
+@client_bp.route('/transaction/verify', methods=['POST'])
+@client_required
+def verify_high_value_transaction_api(current_client):
+    data = request.json or {}
+    transaction_id = data.get('transaction_id')
+    verification_code = data.get('verification_code')
+
+    if not transaction_id or not verification_code:
+        return jsonify({'error': 'Missing required fields'}), 400
+
+    try:
+        result = verify_high_value_transaction(transaction_id, current_client.user_id, verification_code)
+        if result:
+            return jsonify({'message': 'Transaction verified successfully'}), 200
+        else:
+            return jsonify({'error': 'Verification failed'}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+
+# 发送加密消息
 @client_bp.route('/message/send', methods=['POST'])
 @client_required
 def client_send_message(current_user):
@@ -248,23 +349,31 @@ def client_send_message(current_user):
     message_str = data.get("message", "")
     signature_hex = data.get("signature", "")
     hmac_value = data.get("hmac", "")
+
     parts = message_str.split("|")
-
-    is_valid = verify_signature(message_str, signature_hex)
-    if not is_valid:
-        return jsonify({"error": "Signature invalid!"}), 400
-
-    is_integrity = verify_hmac_sha256(message_str, current_user, hmac_value)
-    if not is_integrity:
-        return jsonify({"error": "Signature invalid!"}), 400
-
     receiver_id = int(parts[2].split("=")[1])
     message_text = parts[3].split("=")[1]
+
+    # 验证数字签名
+    is_valid = verify_signature(message_str, signature_hex)
+    if not is_valid:
+        return jsonify({"error": "Digital signature invalid!"}), 400
+
+    # 验证消息完整性
+    is_integrity = verify_hmac_sha256(message_str, current_user, hmac_value)
+    if not is_integrity:
+        return jsonify({"error": "Message integrity check failed!"}), 400
+
     if not all([receiver_id, message_text]):
         return jsonify({'error': 'Missing required fields'}), 400
 
     try:
         message_obj = send_message(current_user.user_id, receiver_id, message_text)
+
+        # 记录操作
+        log_operation(current_user.user_id, "message_sent",
+                      f"Sent encrypted message to user {receiver_id}")
+
         return jsonify({
             'message': 'Message sent successfully',
             'message_id': message_obj.message_id
@@ -273,41 +382,34 @@ def client_send_message(current_user):
         return jsonify({'error': str(e)}), 400
 
 
-# 查看消息（例如已接收消息）
+# 读取消息
 @client_bp.route('/message/read', methods=['GET'])
 @client_required
-def client_get_messages(current_user):
-    data = request.json or {}
-    message_str = data.get("message", "")
-    signature_hex = data.get("signature", "")
-    hmac_value = data.get("hmac", "")
-
-    is_valid = verify_signature(message_str, signature_hex)
-    if not is_valid:
-        return jsonify({"error": "Signature invalid!"}), 400
-
-    is_integrity = verify_hmac_sha256(message_str, current_user, hmac_value)
-    if not is_integrity:
-        return jsonify({"error": "Signature invalid!"}), 400
-
+def client_get_messages(current_client):
     try:
-        # 假设 read_message 函数能返回当前用户所有消息
-        messages = read_message(current_user.user_id)
-        return jsonify(messages), 200
+        messages = read_message(current_client.user_id)
+
+        # 记录操作
+        log_operation(current_client.user_id, "message_read",
+                      "Retrieved encrypted messages")
+
+        return jsonify({'messages': messages}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 
 
-# 查看账户信息与余额
+# 查看账户信息
 @client_bp.route('/account/<int:account_id>/info', methods=['GET'])
 @client_required
 def client_account_info(current_client, account_id):
     try:
-        balance = get_account_info(current_client.user_id, account_id)
-        return jsonify({
-            'account_id': account_id,
-            'balance': balance
-        }), 200
+        account_info = get_account_info(current_client.user_id, account_id)
+
+        # 记录操作
+        log_operation(current_client.user_id, "account_info_access",
+                      f"Retrieved information for account {account_id}")
+
+        return jsonify(account_info), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 
@@ -318,95 +420,92 @@ def client_account_info(current_client, account_id):
 def client_transactions(current_client, account_id):
     try:
         tx_list = get_transactions(current_client.user_id, account_id)
-        # tx_list 为列表，每项包含交易相关信息（如 transaction_id, amount, timestamp, details 等）
+
+        # 记录操作
+        log_operation(current_client.user_id, "transaction_history_access",
+                      f"Retrieved transaction history for account {account_id}")
+
         return jsonify({'transactions': tx_list}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 
 
-# 支付账单
-@client_bp.route('/pay_bill', methods=['POST'])
+# 安全设置更新
+@client_bp.route('/security', methods=['POST'])
 @client_required
-def client_pay_bill(current_client):
+def update_security_settings(current_client):
     data = request.json or {}
-    account_id = data.get('account_id')
-    biller_name = data.get('biller_name')
-    amount = data.get('amount')
-    due_date = data.get('due_date')  # 例如 "2025-03-01"
-    if not all([account_id, biller_name, amount, due_date]):
-        return jsonify({'error': 'Missing required fields'}), 400
+    action = data.get('action')
+
+    if action == 'change_password':
+        current_password = data.get('current_password')
+        new_password = data.get('new_password')
+
+        if not current_password or not new_password:
+            return jsonify({'error': 'Missing required fields'}), 400
+
+        try:
+            result = change_password(current_client.user_id, current_password, new_password)
+            return jsonify({'message': 'Password changed successfully'}), 200
+        except Exception as e:
+            return jsonify({'error': str(e)}), 400
+
+    elif action == 'reset_totp':
+        try:
+            new_totp_secret = reset_totp(current_client.user_id)
+            return jsonify({
+                'message': 'TOTP reset successfully',
+                'totp_secret': new_totp_secret
+            }), 200
+        except Exception as e:
+            return jsonify({'error': str(e)}), 400
+
+    else:
+        return jsonify({'error': 'Invalid action'}), 400
+
+
+# 安全审计日志
+@client_bp.route('/audit/logs', methods=['GET'])
+@client_required
+def get_audit_logs_api(current_client):
+    limit = request.args.get('limit', 50, type=int)
+    offset = request.args.get('offset', 0, type=int)
+    operation_type = request.args.get('operation_type')
+
     try:
-        bill = pay_bill(current_client.user_id, account_id, biller_name, float(amount), due_date)
-        return jsonify({
-            'message': 'Bill paid successfully',
-            'bill_id': bill.bill_id
-        }), 200
+        logs = get_user_audit_logs(
+            current_client.user_id,
+            limit=limit,
+            offset=offset,
+            operation_type=operation_type
+        )
+
+        # 记录访问日志操作
+        log_operation(current_client.user_id, "audit_log_access",
+                      f"Accessed personal audit logs")
+
+        return jsonify({'logs': logs}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 
 
-# 设置定期支付
-@client_bp.route('/recurring_payment', methods=['POST'])
-@client_required
-def client_recurring_payment(current_client):
-    data = request.json or {}
-    account_id = data.get('account_id')
-    payment_amount = data.get('payment_amount')
-    frequency = data.get('frequency')  # 如 "monthly", "weekly"
-    next_payment_date = data.get('next_payment_date')  # 例如 "2025-04-01"
-    if not all([account_id, payment_amount, frequency, next_payment_date]):
-        return jsonify({'error': 'Missing required fields'}), 400
-    try:
-        recurring = setup_recurring_payment(current_client.user_id, account_id, float(payment_amount), frequency,
-                                            next_payment_date)
-        return jsonify({
-            'message': 'Recurring payment setup successfully',
-            'recurring_payment_id': recurring.recurring_payment_id
-        }), 201
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
-
-
-# 申请贷款
-@client_bp.route('/apply_loan', methods=['POST'])
-@client_required
-def client_apply_loan(current_client):
-    data = request.json or {}
-    loan_amount = data.get('loan_amount')
-    interest_rate = data.get('interest_rate', 0.0)
-    duration = data.get('duration')
-    if not all([loan_amount, duration]):
-        return jsonify({'error': 'Missing required fields'}), 400
-    try:
-        loan = apply_for_loan(current_client.user_id, float(loan_amount), float(interest_rate), duration)
-        return jsonify({
-            'message': 'Loan application submitted',
-            'loan_id': loan.loan_id
-        }), 201
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
-
-
-# 更新个人信息与账户设置
-@client_bp.route('/update_profile', methods=['POST'])
+# 更新个人信息
+@client_bp.route('/profile/update', methods=['POST'])
 @client_required
 def client_update_profile(current_client):
     data = request.json or {}
     new_phone = data.get('phone')
     new_address = data.get('address')
-    new_name = data.get('name')
+
     try:
-        updated_user = update_personal_info(current_client.user_id, new_phone=new_phone, new_address=new_address,
-                                            new_name=new_name)
+        updated_user = update_personal_info(current_client.user_id, new_phone=new_phone, new_address=new_address)
+
+        # 记录操作
+        log_operation(current_client.user_id, "profile_update",
+                      "Updated personal profile information")
+
         return jsonify({
-            'message': 'Profile updated successfully',
-            'user_id': updated_user.user_id,
-            'name': updated_user.name,
-            'phone': updated_user.phone,
-            'address': updated_user.address
+            'message': 'Profile updated successfully'
         }), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 400
-
-
-

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DECIMAL, DateTime, Date, Enum, ForeignKey, LargeBinary
+from sqlalchemy import Column, Integer, String, Text, DECIMAL, DateTime, Date, Enum, ForeignKey, LargeBinary, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 import enum
@@ -47,6 +47,10 @@ class Users(Base):
     public_key = Column(Text)
     totp_secret = Column(String(50))
     hmac_key = Column(String(64))
+    failed_login_attempts = Column(Integer, default=0)
+    account_locked_until = Column(DateTime(timezone=True), nullable=True)
+    last_password_change = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc))
+    require_password_change = Column(Boolean, default=False)
 
     # 明文的姓名、电话、地址不再存储，改为加密存储：
     encrypted_name = Column(LargeBinary)  # 存储 AES-256-GCM 加密后的姓名
@@ -115,6 +119,9 @@ class Transactions(Base):
     note_nonce = Column(LargeBinary(12))  # 加密时用的 nonce
     key_version = Column(String(50))  # 对应的密钥版本
     key_name = Column(String(50))
+    transaction_signature = Column(String(255), nullable=True)  # 存储HMAC签名
+    requires_additional_verification = Column(Boolean, default=False)
+    verification_status = Column(String(50), default='not_required')  # 'not_required', 'pending', 'verified', 'failed'
 
     source_account = relationship("Accounts", foreign_keys=[source_account_id], back_populates="transactions_source")
     destination_account = relationship("Accounts", foreign_keys=[destination_account_id],
@@ -194,6 +201,8 @@ class UserSessions(Base):
     session_token = Column(String(255), nullable=False, unique=True)
     login_time = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc))
     logout_time = Column(DateTime(timezone=True))
+    user_agent = Column(String(512), nullable=True)
+    last_activity = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc))
 
     user = relationship("Users", back_populates="sessions")
 
@@ -205,6 +214,7 @@ class AuditLog(Base):
     operation = Column(String(255), nullable=False)
     details = Column(Text)
     log_time = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc))
+    user_agent = Column(String(512), nullable=True)
 
     user = relationship("Users", back_populates="audit_logs")
 
@@ -229,6 +239,7 @@ class SecurityLogs(Base):
     description = Column(Text)
     user_id = Column(Integer, ForeignKey('users.user_id'))
     created_at = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc))
+    user_agent = Column(String(512), nullable=True)
 
     user = relationship("Users", back_populates="security_logs")
 
