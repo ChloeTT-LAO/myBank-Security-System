@@ -6,6 +6,9 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 from config.config import DATABASE_URI
 import datetime
+
+from security.behavioral_authentication import update_transaction_behavior, should_require_verification
+from security.blockchain import record_transaction
 from security.encryption import aes_256_gcm_encrypt
 from security.key_management import retrieve_key_from_db
 from security.integrity import generate_transaction_hash, generate_transaction_signature, is_high_risk_transaction
@@ -53,6 +56,26 @@ Union[Tuple[int, Decimal], Dict[str, Any]]:
             "timestamp": current_time.isoformat(),
             "details": note
         }
+
+        if user_id:
+            update_transaction_behavior(user_id, transaction_data)
+
+            # 基于行为风险和交易特征决定是否需要额外验证
+        requires_verification = False
+        if user_id:
+            requires_verification = should_require_verification(user_id, transaction_data)
+        else:
+            # 如果没有用户ID，回退到基本的高风险交易判断
+            requires_verification = is_high_risk_transaction(transaction_data)
+
+        # 如果需要验证但没有提供验证码
+        if requires_verification and not verification_code:
+            return {
+                "status": "additional_verification_required",
+                "message": "This transaction requires additional verification.",
+                "transaction_data": transaction_data,
+                "reason": "Risk assessment" if user_id else "High value transaction"
+            }
 
         # 检查是否需要额外验证
         if is_high_risk_transaction(transaction_data) and not verification_code:
@@ -148,6 +171,13 @@ Union[Tuple[int, Decimal], Dict[str, Any]]:
                 "fund_transfer",
                 f"Transferred {amount} from account {source_account.account_id} to {destination_account.account_id}"
             )
+
+        if transaction.status == 'completed':
+            try:
+                blockchain_result = record_transaction(transaction.transaction_id, user_id)
+                print(f"Transaction recorded to blockchain: {blockchain_result}")
+            except Exception as e:
+                print(f"Error recording transaction to blockchain: {str(e)}")
 
         return transaction.transaction_id, balance
 

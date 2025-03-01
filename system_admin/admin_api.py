@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from authentication import get_session, register_user, reset_totp, require_password_change
 from config.config import DATABASE_URI
 from config.mybank_db import Users
+from security.blockchain import get_blockchain_status, verify_transaction_integrity
 from .security_implement import view_security_logs, perform_system_backup, apply_system_patch
 from .key_management import generate_aes_key, rotate_key, generate_rsa_key, admin_list_keys, admin_backup_keys, \
     admin_restore_keys, admin_rotate_key
@@ -283,3 +284,33 @@ def admin_manage_user_security(current_admin, user_id):
 
     else:
         return jsonify({'error': 'Invalid action'}), 400
+
+
+@admin_bp.route('/blockchain/status', methods=['GET'])
+@admin_required
+def api_blockchain_status(current_admin):
+    """获取区块链状态"""
+    try:
+        status = get_blockchain_status()
+
+        return jsonify({
+            'message': 'Blockchain status retrieved',
+            'status': status
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@admin_bp.route('/blockchain/verify/<int:transaction_id>', methods=['GET'])
+@admin_required
+def api_verify_blockchain_transaction(current_admin, transaction_id):
+    """验证区块链交易"""
+    try:
+        result = verify_transaction_integrity(transaction_id, current_admin.user_id)
+
+        return jsonify({
+            'message': 'Transaction verification completed',
+            'result': result
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400

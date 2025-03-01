@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 from config.config import DATABASE_URI
 from security.audit import log_operation
+from security.behavioral_authentication import update_login_behavior, get_risk_level
 from security.encryption import hash_password, check_password, aes_256_gcm_encrypt, generate_hmac_key
 from security.key_management import retrieve_key_from_db
 
@@ -158,6 +159,19 @@ def login(email: str, password: str):
             "User logged in successfully",
             user_agent
         )
+        if user and token:
+            update_login_behavior(user.user_id, ip_address, user_agent)
+
+            # 根据风险级别决定是否需要额外验证
+            risk_level = get_risk_level(user.user_id)
+            if risk_level == "high":
+                log_security_event(
+                    user.user_id,
+                    "high_risk_login",
+                    "High risk login detected, additional verification may be required",
+                    ip_address,
+                    user_agent
+                )
 
         # 3) 返回用户对象和 token，供后续调用使用
         return user, token
@@ -214,6 +228,26 @@ def get_session(token: str):
             return None
 
         user_session.last_activity = current_time
+
+        if user_session:
+            # 更新行为分析数据
+            if ip_address and user_agent:
+                update_login_behavior(user_session.user_id, ip_address, user_agent)
+
+            # 检查当前风险级别
+            risk_level = get_risk_level(user_session.user_id)
+
+            # 对于高风险会话，可能需要额外的验证
+            if risk_level == "high" and not getattr(user_session, 'risk_verified', False):
+                log_security_event(
+                    user_session.user_id,
+                    "high_risk_session",
+                    "High risk session activity detected",
+                    ip_address,
+                    user_agent
+                )
+
+            session.commit()
         session.commit()
 
         return user_session
@@ -380,4 +414,3 @@ def require_password_change(user_id: int, admin_id: int):
         raise e
     finally:
         session.close()
-        

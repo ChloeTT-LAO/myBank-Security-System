@@ -1,3 +1,5 @@
+import datetime
+
 import pyotp
 from flask import Blueprint, request, jsonify
 from functools import wraps
@@ -53,6 +55,123 @@ def client_required(f):
         return f(user, *args, **kwargs)
 
     return wrapper
+
+
+# 添加WebAuthn注册API
+@client_bp.route('/webauthn/register', methods=['POST'])
+@client_required
+def api_register_webauthn(current_client):
+    """注册WebAuthn凭证"""
+    try:
+        options = register_webauthn_credential(
+            str(current_client.user_id),
+            current_client.email
+        )
+
+        return jsonify({
+            'message': 'WebAuthn registration options generated',
+            'options': options
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@client_bp.route('/webauthn/register/verify', methods=['POST'])
+@client_required
+def api_verify_webauthn_registration(current_client):
+    """验证WebAuthn注册"""
+    data = request.json or {}
+    credential = data.get('credential')
+
+    if not credential:
+        return jsonify({'error': 'Credential is required'}), 400
+
+    try:
+        result = verify_webauthn_registration(
+            str(current_client.user_id),
+            credential
+        )
+
+        return jsonify({
+            'message': 'WebAuthn credential registered successfully',
+            'result': result
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@client_bp.route('/webauthn/login', methods=['POST'])
+def api_webauthn_login():
+    """使用WebAuthn登录"""
+    data = request.json or {}
+    username = data.get('username')
+
+    if not username:
+        return jsonify({'error': 'Username is required'}), 400
+
+    try:
+        options = authenticate_with_webauthn(username)
+
+        return jsonify({
+            'message': 'WebAuthn authentication options generated',
+            'options': options
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@client_bp.route('/webauthn/login/verify', methods=['POST'])
+def api_verify_webauthn_login():
+    """验证WebAuthn登录"""
+    data = request.json or {}
+    username = data.get('username')
+    credential = data.get('credential')
+
+    if not username or not credential:
+        return jsonify({'error': 'Username and credential are required'}), 400
+
+    try:
+        result = verify_webauthn_authentication(username, credential)
+
+        if result.get('success'):
+            # 创建会话
+            session = Session()
+            user = session.query(Users).filter_by(email=username).first()
+
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+
+            # 生成会话令牌
+            import uuid
+            token = str(uuid.uuid4())
+
+            # 记录会话
+            new_session = UserSessions(
+                user_id=user.user_id,
+                session_token=token,
+                login_time=datetime.datetime.now(tz=datetime.timezone.utc),
+                login_method="webauthn"
+            )
+            session.add(new_session)
+            session.commit()
+
+            # 记录成功登录
+            log_security_event(
+                user.user_id,
+                "webauthn_login_success",
+                "User logged in using WebAuthn",
+                request.remote_addr,
+                request.headers.get("User-Agent")
+            )
+
+            return jsonify({
+                'message': 'Login successful',
+                'token': token
+            }), 200
+        else:
+            return jsonify({'error': 'Authentication failed'}), 401
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
 
 
 # 客户注册
