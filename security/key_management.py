@@ -54,7 +54,7 @@ def store_key(encrypted_key: bytes, key_name, key_type='symmetric', key_version=
         session.close()
 
 
-def retrieve_key_from_db(key_name: str, key_version: str = None) -> Optional[bytes]:
+def retrieve_key_from_db(key_name: str, key_version: str = None):
     """
     从KeyStorage表里拿到加密后的对称密钥，然后用RSA私钥解密
     """
@@ -66,6 +66,8 @@ def retrieve_key_from_db(key_name: str, key_version: str = None) -> Optional[byt
     ks = session.query(KeyManagement).filter_by(key_name=key_name).order_by(desc(KeyManagement.expiry_date))
     if key_version:
         ks = ks.filter_by(key_version=key_version).first()
+    else:
+        ks = ks.first()
     if not ks:
         return None
     encrypted_key = base64.b64decode(ks.key_value)

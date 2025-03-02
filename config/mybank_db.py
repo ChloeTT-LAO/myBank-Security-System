@@ -6,35 +6,12 @@ import datetime
 
 Base = declarative_base()
 
+
 # 1. 角色与权限管理（可选）
 class RoleType(enum.Enum):
     client = "client"
     bank_employee = "bank_employee"
     system_admin = "system_admin"
-
-
-class Roles(Base):
-    __tablename__ = 'roles'
-    role_id = Column(Integer, primary_key=True, autoincrement=True)
-    role_name = Column(String(50), nullable=False)
-    description = Column(Text)
-    role_permissions = relationship("RolePermissions", back_populates="role")
-
-
-class Permissions(Base):
-    __tablename__ = 'permissions'
-    permission_id = Column(Integer, primary_key=True, autoincrement=True)
-    permission_name = Column(String(100), nullable=False)
-    description = Column(Text)
-    role_permissions = relationship("RolePermissions", back_populates="permission")
-
-
-class RolePermissions(Base):
-    __tablename__ = 'role_permissions'
-    role_id = Column(Integer, ForeignKey('roles.role_id'), primary_key=True)
-    permission_id = Column(Integer, ForeignKey('permissions.permission_id'), primary_key=True)
-    role = relationship("Roles", back_populates="role_permissions")
-    permission = relationship("Permissions", back_populates="role_permissions")
 
 
 # 2. 用户管理
@@ -59,6 +36,7 @@ class Users(Base):
     phone_nonce = Column(LargeBinary(12))
     encrypted_address = Column(LargeBinary)  # 加密后的地址
     address_nonce = Column(LargeBinary(12))
+
     # 存储使用哪个密钥版本加密（例如 "v1", "v2"），所有敏感字段可以共享同一版本
     key_name = Column(String(50))
     key_version = Column(String(50))
@@ -70,14 +48,12 @@ class Users(Base):
                         onupdate=datetime.datetime.now(tz=datetime.timezone.utc))
 
     # 关联关系
-    accounts = relationship("Accounts", back_populates="user")
-    loans = relationship("Loans", back_populates="user")
+    accounts = relationship("Accounts", foreign_keys="[Accounts.user_id]", back_populates="user")
     sent_messages = relationship("Messages", foreign_keys="[Messages.sender_id]", back_populates="sender")
     received_messages = relationship("Messages", foreign_keys="[Messages.receiver_id]", back_populates="receiver")
     sessions = relationship("UserSessions", back_populates="user")
     audit_logs = relationship("AuditLog", back_populates="user")
     security_logs = relationship("SecurityLogs", back_populates="user")
-    maintenance_logs = relationship("MaintenanceLog", back_populates="performer")
 
 
 # 3. 客户业务操作相关
@@ -104,13 +80,13 @@ class Accounts(Base):
     unfrozen_by = Column(Integer, ForeignKey('users.user_id'))
     unfreeze_reason = Column(String(255))
 
-    user = relationship("Users", back_populates="accounts")
+    user = relationship("Users", foreign_keys=[user_id], back_populates="accounts")
     transactions_source = relationship("Transactions", foreign_keys="[Transactions.source_account_id]",
                                        back_populates="source_account")
     transactions_destination = relationship("Transactions", foreign_keys="[Transactions.destination_account_id]",
                                             back_populates="destination_account")
-    bill_payments = relationship("BillPayments", back_populates="account")
-    recurring_payments = relationship("RecurringPayments", back_populates="account")
+    frozen_by_user = relationship("Users", foreign_keys=[frozen_by])
+    unfrozen_by_user = relationship("Users", foreign_keys=[unfrozen_by])
 
 
 class Transactions(Base):
@@ -138,51 +114,6 @@ class Transactions(Base):
     source_account = relationship("Accounts", foreign_keys=[source_account_id], back_populates="transactions_source")
     destination_account = relationship("Accounts", foreign_keys=[destination_account_id],
                                        back_populates="transactions_destination")
-
-
-class BillPayments(Base):
-    __tablename__ = 'bill_payments'
-    bill_id = Column(Integer, primary_key=True, autoincrement=True)
-    account_id = Column(Integer, ForeignKey('accounts.account_id'), nullable=False)
-    # 将 biller_name 作为敏感数据加密存储
-    encrypted_biller_name = Column(LargeBinary, nullable=False)
-    biller_name_nonce = Column(LargeBinary(12), nullable=False)
-    key_version = Column(String(50))
-    key_name = Column(String(50))
-
-    amount = Column(DECIMAL(15, 2), nullable=False)
-    due_date = Column(Date)
-    payment_date = Column(Date)
-    status = Column(String(50))
-
-    account = relationship("Accounts", back_populates="bill_payments")
-
-
-class RecurringPayments(Base):
-    __tablename__ = 'recurring_payments'
-    recurring_payment_id = Column(Integer, primary_key=True, autoincrement=True)
-    account_id = Column(Integer, ForeignKey('accounts.account_id'), nullable=False)
-    payment_amount = Column(DECIMAL(15, 2), nullable=False)
-    frequency = Column(String(50))  # 如 monthly, weekly
-    next_payment_date = Column(Date)
-    status = Column(String(50))
-
-    account = relationship("Accounts", back_populates="recurring_payments")
-
-
-class Loans(Base):
-    __tablename__ = 'loans'
-    loan_id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey('users.user_id'), nullable=False)
-    loan_amount = Column(DECIMAL(15, 2), nullable=False)
-    interest_rate = Column(DECIMAL(5, 2))
-    duration = Column(String(50))  # 贷款期限
-    status = Column(String(50))  # 如 applied, approved, rejected, repaying, closed
-    applied_date = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc))
-    approved_date = Column(DateTime(timezone=True))
-    repaid_amount = Column(DECIMAL(15, 2), default=0.00)
-
-    user = relationship("Users", back_populates="loans")
 
 
 class Messages(Base):
@@ -252,16 +183,31 @@ class SecurityLogs(Base):
     user_id = Column(Integer, ForeignKey('users.user_id'))
     created_at = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc))
     user_agent = Column(String(512), nullable=True)
+    ip_address = Column(String(50), nullable=True)
 
     user = relationship("Users", back_populates="security_logs")
 
 
-class MaintenanceLog(Base):
-    __tablename__ = 'maintenance_log'
-    maintenance_id = Column(Integer, primary_key=True, autoincrement=True)
-    performed_by = Column(Integer, ForeignKey('users.user_id'), nullable=False)
-    description = Column(Text)
-    performed_at = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc))
+class BlockchainBlock(Base):
+    __tablename__ = 'blockchain_blocks'
 
-    performer = relationship("Users", back_populates="maintenance_logs")
+    block_id = Column(Integer, primary_key=True, autoincrement=True)
+    previous_hash = Column(String(64))
+    merkle_root = Column(String(64))
+    timestamp = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc))
+    nonce = Column(Integer)
+    difficulty = Column(Integer)
+    data_count = Column(Integer)
+    block_hash = Column(String(64))
 
+
+# 区块链存储的交易记录
+class BlockchainTransaction(Base):
+    __tablename__ = 'blockchain_transactions'
+
+    tx_id = Column(Integer, primary_key=True, autoincrement=True)
+    block_id = Column(Integer)
+    transaction_id = Column(Integer)  # 原始交易ID
+    transaction_hash = Column(String(64))
+    transaction_data = Column(Text)
+    timestamp = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc))

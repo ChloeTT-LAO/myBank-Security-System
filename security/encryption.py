@@ -161,12 +161,12 @@ def load_public_key_from_pem(pem_data: bytes):
 
 
 def generate_hmac_key() -> bytes:
-    # 生成32字节的 HMAC 密钥，并以Base64字符串形式返回
     key = os.urandom(32)
     return key
 
 
 def compute_hmac_sha256(message: bytes, key: bytes) -> str:
+    key = bytes(key)
     mac = hmac.new(key, message, hashlib.sha256).hexdigest()
     return mac
 

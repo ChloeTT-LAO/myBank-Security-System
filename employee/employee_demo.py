@@ -154,64 +154,6 @@ def view_account_transactions(token: str, account_id: int):
         return None
 
 
-def deposit_to_customer(token: str, account_id: int, amount: float, note: str = "Employee Deposit"):
-    """代客户存款"""
-    print(f"\n=== 向账户 {account_id} 存款 {amount} ===")
-
-    headers = {
-        "Authorization": f"Bearer {token}"
-    }
-
-    payload = {
-        "account_id": account_id,
-        "amount": amount,
-        "note": note
-    }
-
-    print("发送存款请求...")
-    url = "https://127.0.0.1:5001/employee/deposit"
-    resp = requests.post(url, headers=headers, json=payload, verify=False)
-    print(f"服务器响应: {resp.status_code}")
-
-    if resp.status_code == 200:
-        data = resp.json()
-        print("存款成功!")
-        print(f"交易ID: {data.get('transaction_id')}")
-        return data
-    else:
-        print(f"存款失败: {resp.text}")
-        return None
-
-
-def withdraw_from_customer(token: str, account_id: int, amount: float, note: str = "Employee Withdrawal"):
-    """代客户取款"""
-    print(f"\n=== 从账户 {account_id} 取款 {amount} ===")
-
-    headers = {
-        "Authorization": f"Bearer {token}"
-    }
-
-    payload = {
-        "account_id": account_id,
-        "amount": amount,
-        "note": note
-    }
-
-    print("发送取款请求...")
-    url = "https://127.0.0.1:5001/employee/withdraw"
-    resp = requests.post(url, headers=headers, json=payload, verify=False)
-    print(f"服务器响应: {resp.status_code}")
-
-    if resp.status_code == 200:
-        data = resp.json()
-        print("取款成功!")
-        print(f"交易ID: {data.get('transaction_id')}")
-        return data
-    else:
-        print(f"取款失败: {resp.text}")
-        return None
-
-
 def employee_transfer(token: str, source_account_id: int, destination_account_id: int, amount: float,
                       note: str = "Employee Transfer"):
     """代客户转账"""
@@ -440,9 +382,7 @@ if __name__ == "__main__":
                 # 账户操作
                 print("\n账户操作:")
                 print("1. 查看账户交易记录")
-                print("2. 代客户存款")
-                print("3. 代客户取款")
-                print("4. 代客户转账")
+                print("2. 代客户转账")
                 print("0. 返回")
 
                 sub_choice = input("请输入选项: ")
@@ -453,20 +393,6 @@ if __name__ == "__main__":
                     view_account_transactions(token, account_id)
 
                 elif sub_choice == "2":
-                    # 代客户存款
-                    account_id = int(input("请输入账户ID: "))
-                    amount = float(input("请输入金额: "))
-                    note = input("请输入备注 (可选): ") or "Employee Deposit"
-                    deposit_to_customer(token, account_id, amount, note)
-
-                elif sub_choice == "3":
-                    # 代客户取款
-                    account_id = int(input("请输入账户ID: "))
-                    amount = float(input("请输入金额: "))
-                    note = input("请输入备注 (可选): ") or "Employee Withdrawal"
-                    withdraw_from_customer(token, account_id, amount, note)
-
-                elif sub_choice == "4":
                     # 代客户转账
                     source_id = int(input("请输入源账户ID: "))
                     dest_id = int(input("请输入目标账户ID: "))

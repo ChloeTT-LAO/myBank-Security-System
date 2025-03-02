@@ -1,15 +1,15 @@
+import base64
 from functools import wraps
-
 import pyotp
 from flask import Blueprint, request, jsonify
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from authentication import get_session, register_user, reset_totp, require_password_change
+from authentication import get_session, register_user, is_strong_password
 from config.config import DATABASE_URI
 from config.mybank_db import Users
+from security.audit import get_security_logs, log_operation
 from security.blockchain import get_blockchain_status, verify_transaction_integrity
-from .security_implement import view_security_logs, perform_system_backup, apply_system_patch
-from .key_management import generate_aes_key, rotate_key, generate_rsa_key, admin_list_keys, admin_backup_keys, \
+from .key_management import generate_aes_key, generate_rsa_key, admin_list_keys, admin_backup_keys, \
     admin_restore_keys, admin_rotate_key
 
 admin_bp = Blueprint('admin_bp', __name__)
@@ -23,7 +23,6 @@ def admin_required(f):
     is ‘client’. If the verification is successful, pass the current user object to the decorated route function as
     the first parameter.
     """
-
     @wraps(f)
     def wrapper(*args, **kwargs):
         session = Session()
@@ -48,7 +47,6 @@ def admin_required(f):
 
 # employee creation
 @admin_bp.route('/register', methods=['POST'])
-# @admin_required
 def employee_register():
     data = request.json or {}
     name = data.get('name')
@@ -56,20 +54,32 @@ def employee_register():
     phone = data.get('phone')
     address = data.get('address')
     password = data.get('password')
-    role = data.get('role')
     public_key = data.get('public_key')
+    role = data.get('role')
+
+    # 记录客户端IP和用户代理
+    ip_address = request.headers.get("X-Test-IP", request.remote_addr)
+    user_agent = request.headers.get("User-Agent")
 
     if not all([name, email, password]):
         return jsonify({'error': 'Missing required fields'}), 400
 
+    if not is_strong_password(password):
+        password = input('Enter your new password: ')
+
     try:
         totp_secret = pyotp.random_base32()
 
-        user_id = register_user(name, email, password, phone, address, public_key, totp_secret, role)
+        user_id, hmac_key = register_user(name, email, password, phone, address, public_key, totp_secret, role)
+
+        # 记录成功注册
+        log_operation(user_id, "user_registration", f"New client registered with email {email}", ip_address, user_agent)
+
         return jsonify({
-            'message': f'{role} registered successfully',
+            'message': 'User registered successfully',
             'user_id': user_id,
-            'totp_secret': totp_secret
+            'totp_secret': totp_secret,
+            'hmac_key': base64.b64encode(hmac_key).decode('utf-8')
         }), 201
 
     except Exception as e:
@@ -180,8 +190,8 @@ def api_generate_new_rsa(current_admin):
 
 
 @admin_bp.route('/keys/new_aes', methods=['POST'])
-@admin_required
-def api_generate_new_aes(current_admin):
+# @admin_required
+def api_generate_new_aes():
     """
     生成新的AES密钥
     POST /admin/keys/new_aes
@@ -197,39 +207,11 @@ def api_generate_new_aes(current_admin):
         return jsonify({'error': 'Key name is required'}), 400
 
     try:
-        key_data = generate_aes_key(key_name, key_type, key_version, expiry_days, current_admin.user_id)
+        key_data = generate_aes_key(key_name, key_type, key_version, expiry_days)
         return jsonify({
             'message': 'AES key generated successfully',
             'key_data': key_data
         }), 201
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
-
-
-@admin_bp.route('/keys/rotate', methods=['POST'])
-@admin_required
-def api_rotate_key(current_admin):
-    """
-    轮换密钥
-    POST /admin/keys/rotate
-    JSON body: {"old_key_id": 1, "key_type": "symmetric", "expiry_days": 30}
-    """
-    data = request.json or {}
-    old_key_id = data.get('old_key_id')
-    key_type = data.get('key_type', 'symmetric')
-    expiry_days = data.get('expiry_days', 30)
-
-    if old_key_id is None:
-        return jsonify({'error': 'Missing old_key_id'}), 400
-
-    try:
-        new_key_obj = rotate_key(old_key_id, key_type, expiry_days)
-        return jsonify({
-            'message': 'Key rotated successfully',
-            'new_key_id': new_key_obj.key_id,
-            'new_key_type': new_key_obj.key_type,
-            'new_key_expiry_date': new_key_obj.expiry_date.isoformat()
-        }), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 
@@ -253,37 +235,6 @@ def get_security_logs_api(current_admin):
         return jsonify({'logs': logs}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 400
-
-
-@admin_bp.route('/user/<int:user_id>/security', methods=['POST'])
-@admin_required
-def admin_manage_user_security(current_admin, user_id):
-    data = request.json or {}
-    action = data.get('action')
-
-    if action == 'reset_totp':
-        try:
-            new_totp_secret = reset_totp(user_id, current_admin.user_id)
-            return jsonify({
-                'message': 'User TOTP reset successfully',
-                'user_id': user_id,
-                'totp_secret': new_totp_secret
-            }), 200
-        except Exception as e:
-            return jsonify({'error': str(e)}), 400
-
-    elif action == 'require_password_change':
-        try:
-            result = require_password_change(user_id, current_admin.user_id)
-            return jsonify({
-                'message': 'User will be required to change password on next login',
-                'user_id': user_id
-            }), 200
-        except Exception as e:
-            return jsonify({'error': str(e)}), 400
-
-    else:
-        return jsonify({'error': 'Invalid action'}), 400
 
 
 @admin_bp.route('/blockchain/status', methods=['GET'])

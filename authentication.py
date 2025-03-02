@@ -1,4 +1,5 @@
 import datetime
+import time
 import uuid
 import pyotp
 from flask import request, jsonify
@@ -6,7 +7,7 @@ from config.mybank_db import Users, UserSessions, SecurityLogs
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 from config.config import DATABASE_URI
-from security.audit import log_operation
+from security.audit import log_operation, log_security_event
 from security.behavioral_authentication import update_login_behavior, get_risk_level
 from security.encryption import hash_password, check_password, aes_256_gcm_encrypt, generate_hmac_key
 from security.key_management import retrieve_key_from_db
@@ -18,9 +19,10 @@ Session = sessionmaker(bind=engine)
 # 定义常量
 MAX_FAILED_ATTEMPTS = 5  # 最大失败尝试次数
 LOCKOUT_DURATION = 15 * 60  # 锁定时间（秒）
-SESSION_TIMEOUT = 30 * 60  # 会话超时时间（秒）
+SESSION_TIMEOUT = 5 * 60  # 会话超时时间（秒）
 IP_TRACKING_ENABLED = True  # 是否启用IP追踪
 key_name = "user_info"
+
 
 def register_user(name: str, email: str, password: str, phone: str, address: str, public_key: str, totp_secret: str, role: str = 'client'):
     session = Session()
@@ -65,7 +67,7 @@ def register_user(name: str, email: str, password: str, phone: str, address: str
         session.close()
 
 
-def login(email: str, password: str):
+def login(email: str, password: str, ip_address: str = None, user_agent: str = None):
     session = Session()
     try:
         user = session.query(Users).filter_by(email=email).first()
@@ -84,6 +86,7 @@ def login(email: str, password: str):
                 user.user_id,
                 "login_attempt_during_lockout",
                 f"Login attempt during account lockout period. Remaining lock time: {minutes}m {seconds}s",
+                ip_address,
                 user_agent
             )
 
@@ -98,6 +101,7 @@ def login(email: str, password: str):
                 user.user_id,
                 "failed_login",
                 f"Failed login attempt ({user.failed_login_attempts}/{MAX_FAILED_ATTEMPTS})",
+                ip_address,
                 user_agent
             )
 
@@ -111,6 +115,7 @@ def login(email: str, password: str):
                     user.user_id,
                     "account_locked",
                     f"Account locked after {MAX_FAILED_ATTEMPTS} failed login attempts",
+                    ip_address,
                     user_agent
                 )
 
@@ -126,13 +131,20 @@ def login(email: str, password: str):
         user_totp_secret = user.totp_secret
         totp = pyotp.TOTP(user_totp_secret)
         print("TOTP Code:", totp.now())
+        start_time = time.time()
+
         totp_client = input("Please input the TOTP code: ")
+        if time.time() - start_time > 30:
+            print("TOTP code expired! Please generate a new one.")
+            return jsonify({"error": "TOTP code expired"}), 401
+
         if not totp.verify(totp_client, valid_window=1):
             # MFA验证失败
             log_security_event(
                 user.user_id,
                 "failed_mfa",
                 "Failed MFA verification during login",
+                ip_address,
                 user_agent
             )
             return jsonify({"error": "Invalid MFA code"}), 401
@@ -159,6 +171,7 @@ def login(email: str, password: str):
             "User logged in successfully",
             user_agent
         )
+
         if user and token:
             update_login_behavior(user.user_id, ip_address, user_agent)
 
@@ -179,6 +192,7 @@ def login(email: str, password: str):
     finally:
         session.close()
 
+
 def logout(session_token: str):
     session = Session()
     # try:
@@ -198,7 +212,8 @@ def logout(session_token: str):
     # finally:
     #     session.close()
 
-def get_session(token: str):
+
+def get_session(token: str, ip_address: str = None, user_agent: str = None):
     """
     获取有效的会话，如果 logout_time 不为空或记录不存在则返回 None
     """
@@ -250,92 +265,7 @@ def get_session(token: str):
             session.commit()
         session.commit()
 
-        return user_session
-    finally:
-        session.close()
-
-
-def change_password(user_id: int, current_password: str, new_password: str):
-    """
-    更改用户密码，同时验证当前密码并检查新密码强度
-    """
-    session = Session()
-    try:
-        user = session.query(Users).filter_by(user_id=user_id).first()
-        if not user:
-            raise Exception("User not found")
-
-        # 验证当前密码
-        if not check_password(current_password, user.password_hash):
-            # 记录失败的密码更改尝试
-            log_security_event(
-                user_id,
-                "failed_password_change",
-                "Failed password change - current password verification failed"
-            )
-            raise Exception("Current password is incorrect")
-
-        # 检查新密码强度
-        if not is_strong_password(new_password):
-            raise Exception("New password does not meet security requirements")
-
-        # 检查新密码是否与当前密码相同
-        if check_password(new_password, user.password_hash):
-            raise Exception("New password must be different from the current password")
-
-        # 更新密码
-        user.password_hash = hash_password(new_password)
-        user.last_password_change = datetime.datetime.now(tz=datetime.timezone.utc)
-        user.require_password_change = False
-
-        session.commit()
-
-        # 记录密码更改
-        log_operation(
-            user_id,
-            "password_change",
-            "User password changed successfully"
-        )
-
-        return True
-    except Exception as e:
-        session.rollback()
-        raise e
-    finally:
-        session.close()
-
-
-def reset_totp(user_id: int, admin_id: int = None):
-    """
-    重置用户的TOTP密钥
-    如果提供了admin_id，表示这是管理员操作
-    """
-    session = Session()
-    try:
-        user = session.query(Users).filter_by(user_id=user_id).first()
-        if not user:
-            raise Exception("User not found")
-
-        # 生成新的TOTP密钥
-        new_totp_secret = pyotp.random_base32()
-        user.totp_secret = new_totp_secret
-
-        session.commit()
-
-        # 记录TOTP重置
-        action_performer = admin_id if admin_id else user_id
-        action_details = "Admin reset user TOTP" if admin_id else "User reset own TOTP"
-
-        log_operation(
-            action_performer,
-            "totp_reset",
-            f"{action_details} for user_id {user_id}"
-        )
-
-        return new_totp_secret
-    except Exception as e:
-        session.rollback()
-        raise e
+        return user_session.user_id
     finally:
         session.close()
 
@@ -364,28 +294,6 @@ def is_strong_password(password: str) -> bool:
             has_special = True
 
     return has_uppercase and has_lowercase and has_digit and has_special
-
-
-def log_security_event(user_id, event_type, description, user_agent=None):
-    """
-    记录安全相关事件
-    """
-    session = Session()
-    try:
-        security_log = SecurityLogs(
-            user_id=user_id,
-            event_type=event_type,
-            description=description,
-            user_agent=user_agent,
-            created_at=datetime.datetime.now(tz=datetime.timezone.utc)
-        )
-        session.add(security_log)
-        session.commit()
-    except Exception as e:
-        session.rollback()
-        print(f"Error logging security event: {str(e)}")
-    finally:
-        session.close()
 
 
 def require_password_change(user_id: int, admin_id: int):

@@ -6,7 +6,7 @@ from typing import Dict, List, Any, Optional
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
 from sqlalchemy.orm import sessionmaker, declarative_base
 from config.config import DATABASE_URI
-from config.mybank_db import Base, Transactions
+from config.mybank_db import Transactions, BlockchainBlock, BlockchainTransaction
 from security.audit import log_operation
 
 engine = create_engine(DATABASE_URI)
@@ -14,29 +14,7 @@ Session = sessionmaker(bind=engine)
 
 
 # 区块链存储的区块
-class BlockchainBlock(Base):
-    __tablename__ = 'blockchain_blocks'
 
-    block_id = Column(Integer, primary_key=True, autoincrement=True)
-    previous_hash = Column(String(64))
-    merkle_root = Column(String(64))
-    timestamp = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc))
-    nonce = Column(Integer)
-    difficulty = Column(Integer)
-    data_count = Column(Integer)
-    block_hash = Column(String(64))
-
-
-# 区块链存储的交易记录
-class BlockchainTransaction(Base):
-    __tablename__ = 'blockchain_transactions'
-
-    tx_id = Column(Integer, primary_key=True, autoincrement=True)
-    block_id = Column(Integer)
-    transaction_id = Column(Integer)  # 原始交易ID
-    transaction_hash = Column(String(64))
-    transaction_data = Column(Text)
-    timestamp = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc))
 
 
 class SimpleBlockchain:
@@ -139,7 +117,7 @@ class SimpleBlockchain:
 
         return hashes[0]
 
-    def _mine_block(self, previous_hash: str, merkle_root: str, timestamp: datetime.datetime) -> Tuple[str, int]:
+    def _mine_block(self, previous_hash: str, merkle_root: str, timestamp: datetime.datetime) -> tuple[str, int]:
         """挖矿，找到符合难度的区块哈希"""
         nonce = 0
         block_hash = self._calculate_hash(previous_hash, merkle_root, timestamp, nonce)

@@ -64,10 +64,10 @@ def get_user_audit_logs(user_id: int, limit: int = 100, offset: int = 0, operati
     """
     session = Session()
     try:
-        query = session.query(AuditLog).filter(AuditLog.user_id == user_id)
+        query = session.query(AuditLog).filter(user_id=user_id)
 
         if operation_type:
-            query = query.filter(AuditLog.operation == operation_type)
+            query = query.filter(operation=operation_type)
 
         logs = query.order_by(AuditLog.log_time.desc()).limit(limit).offset(offset).all()
 
@@ -96,10 +96,10 @@ def get_security_logs(admin_user_id: int, limit: int = 100, offset: int = 0, eve
         query = session.query(SecurityLogs)
 
         if event_type:
-            query = query.filter(SecurityLogs.event_type == event_type)
+            query = query.filter(event_type=event_type)
 
         if user_id:
-            query = query.filter(SecurityLogs.user_id == user_id)
+            query = query.filter(user_id=user_id)
 
         logs = query.order_by(SecurityLogs.created_at.desc()).limit(limit).offset(offset).all()
 

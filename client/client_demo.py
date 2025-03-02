@@ -1,5 +1,9 @@
 import base64
+import hashlib
+import json
 import time
+import uuid
+
 import requests
 import getpass
 import pyotp
@@ -10,20 +14,21 @@ from security.encryption import generate_rsa_keypair, serialize_private_key_to_p
 
 
 def ensure_directory(directory):
-    """确保目录存在"""
+    """Ensure directory existence"""
     if not os.path.exists(directory):
         os.makedirs(directory)
 
 
-def user_register(name: str, email: str, password: str, phone: str, address: str):
-    """注册新用户"""
-    print("\n=== 注册新用户 ===")
+def user_register(name: str, email: str, password: str, phone: str, address: str, ip_address: str = None,
+                  user_agent: str = None):
+    """Register a new user"""
+    print("\n=== Register a new user ===")
 
     # 确保存储目录存在
     ensure_directory("user_secret")
 
     # 1. 生成本地RSA密钥对
-    print("生成RSA密钥对...")
+    print("Generate an RSA key pair...")
     private_key, public_key = generate_rsa_keypair()
     private_pem = serialize_private_key_to_pem(private_key)
     public_pem = serialize_public_key_to_pem(public_key)
@@ -33,7 +38,7 @@ def user_register(name: str, email: str, password: str, phone: str, address: str
     with open(f"user_secret/{safe_email}_private_key.pem", "wb") as private_file:
         private_file.write(private_pem)
         private_file.close()
-    print(f"私钥已保存到 user_secret/{safe_email}_private_key.pem")
+    print(f"The private key is saved to user_secret/{safe_email}_private_key.pem")
 
     # 2. 构造请求体
     payload = {
@@ -45,11 +50,17 @@ def user_register(name: str, email: str, password: str, phone: str, address: str
         "public_key": base64.b64encode(public_pem).decode()
     }
 
+    headers = {}
+    if ip_address:
+        headers["X-Test-IP"] = ip_address
+    if user_agent:
+        headers["User-Agent"] = user_agent
+
     # 3. 发送注册请求
-    print("发送注册请求...")
+    print("Send a registration request...")
     url = "https://127.0.0.1:5001/client/register"
-    resp = requests.post(url, json=payload, verify=False)
-    print(f"服务器响应: {resp.status_code}")
+    resp = requests.post(url, json=payload, headers=headers, verify=False)
+    print(f"Server response: {resp.status_code}")
 
     if resp.status_code == 201:
         resp_data = resp.json()
@@ -60,46 +71,47 @@ def user_register(name: str, email: str, password: str, phone: str, address: str
         if totp_secret:
             with open(f"user_secret/{safe_email}_totp_secret.txt", "w") as f:
                 f.write(totp_secret)
-            print(f"TOTP密钥已保存到 user_secret/{safe_email}_totp_secret.txt")
+            print(f"TOTP key is saved to user_secret/{safe_email}_totp_secret.txt")
 
             # 显示TOTP二维码URL
             totp_uri = pyotp.totp.TOTP(totp_secret).provisioning_uri(
                 name=email, issuer_name="MyBank")
             print(f"TOTP URI: {totp_uri}")
-            print("请使用Google Authenticator或其他TOTP应用扫描此URI以设置双因素认证")
+            print("Use Google Authenticator or another TOTP application to scan this URI to set up two-factor authentication")
 
         # 保存HMAC密钥
         if hmac_key:
-            with open(f"user_secret/{safe_email}_hmac_key.txt", "w") as f:
-                f.write(hmac_key)
-            print(f"HMAC密钥已保存到 user_secret/{safe_email}_hmac_key.txt")
+            with open(f"user_secret/{safe_email}_hmac_key.txt", "wb") as f:
+                f.write(base64.b64decode(hmac_key))
+            print(f"HMAC key is saved to user_secret/{safe_email}_hmac_key.txt")
 
-        print("注册成功！请妥善保管您的密钥文件，不要透露给他人。")
+        print("Registered successfully! Please keep your key file safe and do not disclose it to others.")
     else:
-        print(f"注册失败: {resp.text}")
+        print(f"Fail to register: {resp.text}")
 
 
-def user_login(email: str, password: str):
-    """用户登录"""
-    print("\n=== 用户登录 ===")
+def user_login(email: str, password: str, ip_address: str = None,
+                  user_agent: str = None):
+    """user login"""
+    print("\n=== Login ===")
 
-    # 1. 构造签名消息
+    # 1. Construct signature message
     timestamp = int(time.time())
     message = f"login|email={email}|timestamp={timestamp}"
 
-    # 2. 读取私钥文件并签名
+    # 2. Read the private key file and sign it
     safe_email = email.replace("@", "_at_").replace(".", "_dot_")
     try:
         with open(f"user_secret/{safe_email}_private_key.pem", "rb") as private_file:
             private_pem = private_file.read()
     except FileNotFoundError:
-        print(f"错误: 找不到私钥文件 user_secret/{safe_email}_private_key.pem")
+        print(f"Error: Private key file not found: user_secret/{safe_email}_private_key.pem")
         return None
 
     signature_bytes = sign_data(message.encode('utf-8'), private_pem)
     signature_hex = signature_bytes.hex()
 
-    # 3. 构造请求体
+    # 3. Construct request body
     payload = {
         "message": message,
         "signature": signature_hex,
@@ -107,18 +119,23 @@ def user_login(email: str, password: str):
         "password": password
     }
 
-    # 4. 发送登录请求
-    print("发送登录请求...")
+    headers = {}
+    if ip_address:
+        headers["X-Test-IP"] = ip_address
+    if user_agent:
+        headers["User-Agent"] = user_agent
+
+    # 4. Send login request
+    print("Sending login request...")
     url = "https://127.0.0.1:5001/client/login"
-    resp = requests.post(url, json=payload, verify=False)
-    print(f"服务器响应: {resp.status_code}")
+    resp = requests.post(url, json=payload, headers=headers, verify=False)
+    print(f"Server response: {resp.status_code}")
 
     if resp.status_code == 200:
-        token = resp.json().get("token")
-        print("登录成功！")
-        return token
+        print("Login successful！")
+        return resp
     else:
-        print(f"登录失败: {resp.text}")
+        print(f"Fail to login: {resp.text}")
         return None
 
 
@@ -143,9 +160,10 @@ def user_logout(token: str):
         return False
 
 
-def user_create_account(email: str, account_type: str, token: str):
-    """创建新账户"""
-    print("\n=== 创建新账户 ===")
+def user_create_account(email: str, account_type: str, token: str, ip_address: str = None,
+                  user_agent: str = None):
+    """ create a new account """
+    print("\n=== create a new account ===")
 
     # 1. 构造签名消息
     timestamp = int(time.time())
@@ -160,13 +178,13 @@ def user_create_account(email: str, account_type: str, token: str):
         with open(f"user_secret/{safe_email}_hmac_key.txt", "rb") as hmac_file:
             hmac_key = hmac_file.read()
     except FileNotFoundError as e:
-        print(f"错误: 找不到密钥文件 - {str(e)}")
+        print(f"Error: Key file not found - {str(e)}")
         return None
 
     # 3. 生成签名和HMAC
     signature_bytes = sign_data(message.encode('utf-8'), private_pem)
     signature_hex = signature_bytes.hex()
-    hmac_value = compute_hmac_sha256(message.encode('utf-8'), hmac_key)
+    hmac_value = compute_hmac_sha256(message.encode('utf-8'), base64.b64decode(hmac_key))
 
     # 4. 构造请求体
     payload = {
@@ -175,23 +193,26 @@ def user_create_account(email: str, account_type: str, token: str):
         "hmac": hmac_value
     }
 
-    # 5. 发送请求
-    headers = {
-        "Authorization": f"Bearer {token}"
-    }
+    headers = {}
+    if ip_address:
+        headers["X-Test-IP"] = ip_address
+    if user_agent:
+        headers["User-Agent"] = user_agent
+    headers["Authorization"] = f"Bearer {token}"
 
-    print("发送创建账户请求...")
+
+    print("Send an account creation request...")
     url = "https://127.0.0.1:5001/client/account/create"
     resp = requests.post(url, json=payload, headers=headers, verify=False)
-    print(f"服务器响应: {resp.status_code}")
+    print(f"Server respond: {resp.status_code}")
 
     if resp.status_code == 201:
         data = resp.json()
         account_number = data.get("account_number")
-        print(f"账户创建成功! 账号: {account_number}")
+        print(f"Account created successfully! Account number: {account_number}")
         return account_number
     else:
-        print(f"创建账户失败: {resp.text}")
+        print(f"Account creation failure: {resp.text}")
         return None
 
 
@@ -505,74 +526,6 @@ def change_password(token: str, current_password: str, new_password: str):
         return False
 
 
-def reset_totp(token: str, email: str):
-    """重置TOTP"""
-    print("\n=== 重置TOTP ===")
-
-    payload = {
-        "action": "reset_totp"
-    }
-
-    headers = {
-        "Authorization": f"Bearer {token}"
-    }
-
-    print("发送TOTP重置请求...")
-    url = "https://127.0.0.1:5001/client/security"
-    resp = requests.post(url, json=payload, headers=headers, verify=False)
-    print(f"服务器响应: {resp.status_code}")
-
-    if resp.status_code == 200:
-        data = resp.json()
-        new_totp_secret = data.get("totp_secret")
-
-        # 保存新的TOTP密钥
-        safe_email = email.replace("@", "_at_").replace(".", "_dot_")
-        with open(f"user_secret/{safe_email}_totp_secret.txt", "w") as f:
-            f.write(new_totp_secret)
-
-        # 显示TOTP二维码URL
-        totp_uri = pyotp.totp.TOTP(new_totp_secret).provisioning_uri(
-            name=email, issuer_name="MyBank")
-
-        print("TOTP重置成功!")
-        print(f"新的TOTP密钥已保存到 user_secret/{safe_email}_totp_secret.txt")
-        print(f"TOTP URI: {totp_uri}")
-        print("请使用Google Authenticator或其他TOTP应用扫描此URI以更新您的双因素认证")
-
-        return True
-    else:
-        print(f"TOTP重置失败: {resp.text}")
-        return False
-
-
-def get_audit_logs(token: str):
-    """获取审计日志"""
-    print("\n=== 获取审计日志 ===")
-
-    headers = {
-        "Authorization": f"Bearer {token}"
-    }
-
-    print("发送请求...")
-    url = "https://127.0.0.1:5001/client/audit/logs"
-    resp = requests.get(url, headers=headers, verify=False)
-    print(f"服务器响应: {resp.status_code}")
-
-    if resp.status_code == 200:
-        logs = resp.json().get("logs", [])
-        print(f"找到 {len(logs)} 条审计日志记录:")
-        for idx, log in enumerate(logs, 1):
-            print(f"\n日志 #{idx}:")
-            print(f"  操作: {log.get('operation')}")
-            print(f"  详情: {log.get('details')}")
-            print(f"  时间: {log.get('log_time')}")
-        return logs
-    else:
-        print(f"获取审计日志失败: {resp.text}")
-        return None
-
-
 def update_profile(token: str, phone: str = None, address: str = None):
     """更新个人资料"""
     print("\n=== 更新个人资料 ===")
@@ -604,88 +557,300 @@ def update_profile(token: str, phone: str = None, address: str = None):
         return False
 
 
+def register_webauthn(email, token):
+    """注册WebAuthn凭证"""
+    print("\n=== 注册WebAuthn凭证 ===")
+
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    url = "https://127.0.0.1:5001/client/webauthn/register"
+    resp = requests.post(url, headers=headers, json={}, verify=False)
+    print(f"服务器响应: {resp.status_code}")
+
+    if resp.status_code == 200:
+        options = resp.json().get("options")
+
+        print("请在浏览器中完成WebAuthn注册...")
+        print("注册选项:", json.dumps(options, indent=2))
+
+        # 模拟浏览器返回的凭证
+        # 在实际情况下，这应该由浏览器的WebAuthn API生成
+        credential = {
+            "id": "simulated-credential-id-" + str(uuid.uuid4()),
+            "rawId": base64.b64encode(os.urandom(32)).decode('ascii'),
+            "type": "public-key",
+            "response": {
+                "clientDataJSON": {
+                    "type": "webauthn.create",
+                    "challenge": options["challenge"],
+                    "origin": "https://127.0.0.1:5001"
+                },
+                "attestationObject": {
+                    "fmt": "none",
+                    "authData": {
+                        "rpIdHash": hashlib.sha256(b"bankingsystem.example.com").digest(),
+                        "flags": 0x41,  # AT and UP flags
+                        "counter": 1,
+                        "attestedCredentialData": {
+                            "aaguid": os.urandom(16),
+                            "credentialId": base64.b64encode(os.urandom(32)).decode('ascii'),
+                            "credentialPublicKey": base64.b64encode(os.urandom(65)).decode('ascii')
+                        }
+                    }
+                }
+            }
+        }
+
+        # 验证注册
+        verify_url = "https://127.0.0.1:5001/client/webauthn/register/verify"
+        verify_resp = requests.post(
+            verify_url,
+            headers=headers,
+            json={"credential": credential},
+            verify=False
+        )
+        print(f"验证响应: {verify_resp.status_code}")
+        print(verify_resp.json())
+
+        return verify_resp.json()
+    else:
+        print(f"注册失败: {resp.text}")
+        return None
+
+
+def webauthn_login(email):
+    """使用WebAuthn登录"""
+    print("\n=== WebAuthn登录 ===")
+
+    url = "https://127.0.0.1:5001/client/webauthn/login"
+    resp = requests.post(url, json={"username": email}, verify=False)
+    print(f"服务器响应: {resp.status_code}")
+
+    if resp.status_code == 200:
+        options = resp.json().get("options")
+
+        print("请在浏览器中完成WebAuthn验证...")
+        print("验证选项:", json.dumps(options, indent=2))
+
+        # 模拟浏览器返回的凭证
+        # 在实际情况下，这应该由浏览器的WebAuthn API生成
+        credential = {
+            "id": options["allowCredentials"][0]["id"],
+            "rawId": base64.b64encode(os.urandom(32)).decode('ascii'),
+            "type": "public-key",
+            "response": {
+                "clientDataJSON": {
+                    "type": "webauthn.get",
+                    "challenge": options["challenge"],
+                    "origin": "https://127.0.0.1:5001"
+                },
+                "authenticatorData": base64.b64encode(os.urandom(37)).decode('ascii'),
+                "signature": base64.b64encode(os.urandom(64)).decode('ascii'),
+                "userHandle": base64.b64encode(os.urandom(32)).decode('ascii')
+            }
+        }
+
+        # 验证登录
+        verify_url = "https://127.0.0.1:5001/client/webauthn/login/verify"
+        verify_resp = requests.post(
+            verify_url,
+            json={
+                "username": email,
+                "credential": credential
+            },
+            verify=False
+        )
+        print(f"验证响应: {verify_resp.status_code}")
+
+        if verify_resp.status_code == 200:
+            token = verify_resp.json().get("token")
+            print("登录成功!")
+            return token
+        else:
+            print(f"登录失败: {verify_resp.text}")
+            return None
+    else:
+        print(f"登录请求失败: {resp.text}")
+        return None
+
+
+def test_risk_behavior(email, token):
+    """测试用户行为风险评估"""
+    print("\n=== 测试行为风险评估 ===")
+
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    # 1. 进行几次正常交易建立基线
+    print("进行几次正常交易以建立基线...")
+
+    # 创建账户
+    account_type = "checking"
+    resp = user_create_account(email, account_type, token)
+    if resp.status_code != 201:
+        print("创建账户失败")
+        return
+
+    account_number = resp.json().get("account_number")
+
+    # 存款
+    amount = "1000"
+    resp = user_deposit(email, account_number, amount, token)
+    if resp.status_code != 200:
+        print("存款失败")
+        return
+
+    # 查询余额多次，建立正常行为模式
+    for _ in range(3):
+        url = f"https://127.0.0.1:5001/client/account/1/info"
+        requests.get(url, headers=headers, verify=False)
+        time.sleep(1)
+
+    print("基线建立完成")
+
+    # 2. 测试异常行为 - 大额转账
+    print("\n测试异常行为 - 大额转账...")
+
+    # 创建第二个账户
+    resp = user_create_account(email, "savings", token)
+    if resp.status_code != 201:
+        print("创建第二个账户失败")
+        return
+
+    second_account = resp.json().get("account_number")
+
+    # 尝试大额转账（应该触发额外验证）
+    large_amount = "900"
+    resp = user_transfer(email, account_number, second_account, large_amount, token)
+
+    print(f"转账响应: {resp.status_code}")
+    print(resp.json())
+
+    if resp.status_code == 428:  # 需要额外验证
+        print("系统正确识别了高风险交易并要求额外验证!")
+    else:
+        print("未触发额外验证，可能是风险评估阈值未达到")
+
+    return resp.json()
+
+
+def view_audit_logs(token):
+    """查看审计日志"""
+    print("\n=== 查看审计日志 ===")
+
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    url = "https://127.0.0.1:5001/client/audit/logs"
+    resp = requests.get(url, headers=headers, verify=False)
+    print(f"服务器响应: {resp.status_code}")
+
+    if resp.status_code == 200:
+        logs = resp.json().get("logs", [])
+        print(f"找到 {len(logs)} 条审计记录:")
+        for idx, log in enumerate(logs[:5], 1):  # 只显示前5条
+            print(f"\n日志 #{idx}:")
+            print(f"  操作: {log.get('operation')}")
+            print(f"  详情: {log.get('details')}")
+            print(f"  时间: {log.get('log_time')}")
+        return logs
+    else:
+        print(f"获取审计日志失败: {resp.text}")
+        return None
+
+
 if __name__ == "__main__":
-    print("==================== 欢迎使用MyBank客户端 ====================")
+    print("==================== Welcome to the MyBank client ====================")
 
     while True:
-        print("\n选择操作:")
-        print("1. 注册新账户")
-        print("2. 登录")
-        print("0. 退出")
+        print("\nselecting operation:")
+        print("1. Register")
+        print("2. Login")
+        print("0. Logout")
 
-        main_choice = input("请输入选项: ")
+        main_choice = input("Please enter options: ")
 
         if main_choice == "1":
-            # 注册新账户
-            name = input("请输入姓名: ")
-            email = input("请输入电子邮箱: ")
-            password = getpass.getpass("请输入密码: ")
-            phone = input("请输入电话号码: ")
-            address = input("请输入地址: ")
+            # Register
+            name = input("Please enter name: ")
+            email = input("Please enter email address: ")
+            password = getpass.getpass("Please enter password: ")
+            phone = input("Please enter phone number: ")
+            address = input("Please enter address: ")
 
             user_register(name, email, password, phone, address)
 
         elif main_choice == "2":
-            # 登录
-            email = input("请输入电子邮箱: ")
-            password = getpass.getpass("请输入密码: ")
+            email = None
+            token = None
+            print("Please select a login method:")
+            print("1. Password login")
+            print("2. WebAuthn login")
+            login_choice = input("Please enter options: ")
 
-            token = user_login(email, password)
+            if login_choice == "1":
+                email = input("Please enter your email address: ")
+                password = getpass.getpass("Please enter your password: ")
+                resp = user_login(email, password)
+                if resp.status_code == 200:
+                    token = resp.json()["token"]
+
+            elif login_choice == "2":
+                email = input("Please enter your email address: ")
+                token = webauthn_login(email)
 
             if token:
-                # 登录成功，显示功能菜单
+                # The login succeeds, and the function menu is displayed
                 while True:
-                    print("\n--- 用户功能菜单 ---")
-                    print("1. 创建新账户")
-                    print("2. 存款")
-                    print("3. 取款")
-                    print("4. 转账")
-                    print("5. 查看账户信息")
-                    print("6. 查看交易历史")
-                    print("7. 发送加密消息给银行职员")
-                    print("8. 安全设置")
-                    print("9. 查看审计日志")
-                    print("10. 更新个人资料")
-                    print("0. 登出")
+                    print("\n--- User function menu ---")
+                    print("1. Create a new account")
+                    print("2. Deposit")
+                    print("3. Withdraw")
+                    print("4. Transfer")
+                    print("5. View Account information")
+                    print("6. View transaction history")
+                    print("7. Send encrypted messages to bank staff")
+                    print("8. Security settings")
+                    print("9. Update profile")
+                    print("10. Register WebAuthn credentials")
+                    print("11. Test behavioral risk assessment")
+                    print("0. Logout")
 
-                    sub_choice = input("请输入选项: ")
+                    sub_choice = input("Please enter options: ")
 
                     if sub_choice == "1":
-                        # 创建新账户
-                        account_type = input("请输入账户类型 (savings/checking): ")
-                        user_create_account(email, account_type, token)
+                        account_type = input("Please enter the account type (savings/checking): ")
+                        account_number = user_create_account(email, account_type, token)
 
                     elif sub_choice == "2":
-                        # 存款
                         account_number = input("请输入账号: ")
                         amount = input("请输入金额: ")
                         user_deposit(email, account_number, amount, token)
 
                     elif sub_choice == "3":
-                        # 取款
                         account_number = input("请输入账号: ")
                         amount = input("请输入金额: ")
                         user_withdraw(email, account_number, amount, token)
 
                     elif sub_choice == "4":
-                        # 转账
                         source_account = input("请输入源账号: ")
                         destination_account = input("请输入目标账号: ")
                         amount = input("请输入金额: ")
                         user_transfer(email, source_account, destination_account, amount, token)
 
                     elif sub_choice == "5":
-                        # 查看账户信息
                         account_id = int(input("请输入账户ID: "))
                         get_account_info(token, account_id)
 
                     elif sub_choice == "6":
-                        # 查看交易历史
                         account_id = int(input("请输入账户ID: "))
                         get_transaction_history(token, account_id)
 
                     elif sub_choice == "7":
-                        # 发送加密消息
                         employee_id = int(input("请输入银行职员ID: "))
                         message = input("请输入消息内容: ")
                         client_send_message(email, employee_id, message, token)
@@ -709,14 +874,7 @@ if __name__ == "__main__":
                             else:
                                 change_password(token, current_password, new_password)
 
-                        elif security_choice == "2":
-                            reset_totp(token, email)
-
                     elif sub_choice == "9":
-                        # 查看审计日志
-                        get_audit_logs(token)
-
-                    elif sub_choice == "10":
                         # 更新个人资料
                         update_phone = input("请输入新电话号码 (留空保持不变): ")
                         update_address = input("请输入新地址 (留空保持不变): ")
@@ -725,6 +883,14 @@ if __name__ == "__main__":
                         address = update_address if update_address else None
 
                         update_profile(token, phone, address)
+
+                    elif sub_choice == "10":
+                        # 注册WebAuthn凭证
+                        register_webauthn(email, token)
+
+                    elif sub_choice == "11":
+                        # 测试行为风险评估
+                        test_risk_behavior(email, token)
 
                     elif sub_choice == "0":
                         # 登出

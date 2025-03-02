@@ -1,3 +1,4 @@
+import base64
 import datetime
 
 import pyotp
@@ -5,12 +6,14 @@ from flask import Blueprint, request, jsonify
 from functools import wraps
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
-from authentication import register_user, login, logout, get_session, change_password, reset_totp
+from authentication import register_user, login, logout, get_session, is_strong_password
 from config.config import DATABASE_URI
 from security.encryption import verify_hmac_sha256
 from security.sign_verify import verify_signature
 from security.integrity import verify_high_value_transaction, is_high_risk_transaction
-from security.audit import log_operation, get_user_audit_logs
+from security.audit import log_operation, get_user_audit_logs, log_security_event
+from security.webauthn import verify_webauthn_registration, authenticate_with_webauthn, register_webauthn_credential, \
+    verify_webauthn_authentication
 from .account import update_personal_info, get_account_info, get_transactions, create_account
 from .messages import send_message, read_message
 from .transfer import transfer, deposit, withdraw
@@ -38,13 +41,13 @@ def client_required(f):
         token = auth_header.replace("Bearer ", "").strip()
 
         # 获取客户端IP地址和用户代理
+        ip_address = request.headers.get("X-Test-IP", request.remote_addr)
         user_agent = request.headers.get("User-Agent")
 
-        session_obj = get_session(token)
-        if not session_obj:
+        user_id = get_session(token, ip_address, user_agent)
+        if not user_id:
             return jsonify({'error': 'Invalid or expired session'}), 401
 
-        user_id = session_obj.user_id
         user = session.query(Users).filter_by(user_id=user_id).first()
         if user.role.value != 'client':
             # 记录可能的权限越界尝试
@@ -186,11 +189,14 @@ def client_register():
     public_key = data.get('public_key')
 
     # 记录客户端IP和用户代理
-    ip_address = request.remote_addr
+    ip_address = request.headers.get("X-Test-IP", request.remote_addr)
     user_agent = request.headers.get("User-Agent")
 
     if not all([name, email, password]):
         return jsonify({'error': 'Missing required fields'}), 400
+
+    if not is_strong_password(password):
+        password = input('Enter your new password: ')
 
     try:
         totp_secret = pyotp.random_base32()
@@ -204,7 +210,7 @@ def client_register():
             'message': 'User registered successfully',
             'user_id': user_id,
             'totp_secret': totp_secret,
-            'hmac_key': hmac_key
+            'hmac_key': base64.b64encode(hmac_key).decode('utf-8')
         }), 201
 
     except Exception as e:
@@ -221,14 +227,14 @@ def client_login():
     password = data.get('password')
 
     # 记录客户端IP和用户代理
-    ip_address = request.remote_addr
+    ip_address = request.headers.get("X-Test-IP", request.remote_addr)
     user_agent = request.headers.get("User-Agent")
 
     is_valid = verify_signature(message, signature_hex)
     if not is_valid:
         return jsonify({"error": "Digital signature invalid!"}), 400
 
-    user, token_or_error = login(email, password, user_agent)
+    user, token_or_error = login(email, password, ip_address, user_agent)
 
     if user:
         return jsonify({'message': 'Login successful', 'token': token_or_error}), 200
@@ -249,7 +255,7 @@ def client_logout(current_client):
         return jsonify({'error': 'Logout failed'}), 400
 
 
-# 创建账户
+# create account
 @client_bp.route('/account/create', methods=['POST'])
 @client_required
 def client_create_account_api(current_user):
@@ -547,40 +553,6 @@ def client_transactions(current_client, account_id):
         return jsonify({'transactions': tx_list}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 400
-
-
-# 安全设置更新
-@client_bp.route('/security', methods=['POST'])
-@client_required
-def update_security_settings(current_client):
-    data = request.json or {}
-    action = data.get('action')
-
-    if action == 'change_password':
-        current_password = data.get('current_password')
-        new_password = data.get('new_password')
-
-        if not current_password or not new_password:
-            return jsonify({'error': 'Missing required fields'}), 400
-
-        try:
-            result = change_password(current_client.user_id, current_password, new_password)
-            return jsonify({'message': 'Password changed successfully'}), 200
-        except Exception as e:
-            return jsonify({'error': str(e)}), 400
-
-    elif action == 'reset_totp':
-        try:
-            new_totp_secret = reset_totp(current_client.user_id)
-            return jsonify({
-                'message': 'TOTP reset successfully',
-                'totp_secret': new_totp_secret
-            }), 200
-        except Exception as e:
-            return jsonify({'error': str(e)}), 400
-
-    else:
-        return jsonify({'error': 'Invalid action'}), 400
 
 
 # 安全审计日志

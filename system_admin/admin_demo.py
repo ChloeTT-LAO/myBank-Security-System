@@ -1,3 +1,6 @@
+import os
+
+import pyotp
 import requests
 import base64
 import time
@@ -6,43 +9,82 @@ from security.encryption import generate_rsa_keypair, serialize_private_key_to_p
 from security.sign_verify import sign_data
 
 
-def employee_creation(name: str, email: str, password: str, phone: str, address: str, role: str):
-    # 1. 生成本地RSA密钥对 (演示)
+def ensure_directory(directory):
+    """Ensure directory existence"""
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
+
+def employee_creation(name: str, email: str, password: str, phone: str, address: str, role: str, ip_address: str = None,
+                  user_agent: str = None):
+
+    print("\n=== Register a new employee/admin ===")
+
+    # 确保存储目录存在
+    ensure_directory("employee_secret")
+
+    # 1. 生成本地RSA密钥对
+    print("Generate an RSA key pair...")
     private_key, public_key = generate_rsa_keypair()
     private_pem = serialize_private_key_to_pem(private_key)
     public_pem = serialize_public_key_to_pem(public_key)
 
-    # 保存私钥到文件（以二进制模式写入）
+    # 保存私钥到文件
     safe_email = email.replace("@", "_at_").replace(".", "_dot_")
     with open(f"employee_secret/{safe_email}_private_key.pem", "wb") as private_file:
         private_file.write(private_pem)
         private_file.close()
+    print(f"The private key is saved to employee_secret/{safe_email}_private_key.pem")
 
-    # 4. 构造请求体
+    # 2. 构造请求体
     payload = {
         "name": name,
         "address": address,
         "phone": phone,
         "password": password,
         "email": email,
-        "public_key": base64.b64encode(public_pem).decode(),
-        "role": role
+        "role": role,
+        "public_key": base64.b64encode(public_pem).decode()
     }
 
-    # 5. 向HTTPS服务器发起POST请求
-    url = "https://127.0.0.1:5001/admin/register"
-    # 因为是自签名证书，需要用 verify=False 或指定证书
-    resp = requests.post(url, json=payload, verify=False)
-    resp_data = resp.json()
-    totp_secret = resp_data.get("totp_secret")
-    if totp_secret:
-        # 把 totp_secret 写入本地文件
-        with open(f"employee_secret/{safe_email}_totp_secret.txt", "w") as f:
-            f.write(totp_secret)
-        print("TOTP secret saved to totp_secret.txt")
+    headers = {}
+    if ip_address:
+        headers["X-Test-IP"] = ip_address
+    if user_agent:
+        headers["User-Agent"] = user_agent
+
+    # 3. 发送注册请求
+    print("Send a registration request...")
+    url = "https://127.0.0.1:5001/client/register"
+    resp = requests.post(url, json=payload, headers=headers, verify=False)
+    print(f"Server response: {resp.status_code}")
+
+    if resp.status_code == 201:
+        resp_data = resp.json()
+        totp_secret = resp_data.get("totp_secret")
+        hmac_key = resp_data.get("hmac_key")
+
+        # 保存TOTP密钥
+        if totp_secret:
+            with open(f"employee_secret/{safe_email}_totp_secret.txt", "w") as f:
+                f.write(totp_secret)
+            print(f"TOTP key is saved to employee_secret/{safe_email}_totp_secret.txt")
+
+            # 显示TOTP二维码URL
+            totp_uri = pyotp.totp.TOTP(totp_secret).provisioning_uri(
+                name=email, issuer_name="MyBank")
+            print(f"TOTP URI: {totp_uri}")
+            print("Use Google Authenticator or another TOTP application to scan this URI to set up two-factor authentication")
+
+        # 保存HMAC密钥
+        if hmac_key:
+            with open(f"employee_secret/{safe_email}_hmac_key.txt", "wb") as f:
+                f.write(base64.b64decode(hmac_key))
+            print(f"HMAC key is saved to employee_secret/{safe_email}_hmac_key.txt")
+
+        print("Registered successfully! Please keep your key file safe and do not disclose it to others.")
     else:
-        print("No totp_secret found in response.")
-    print(resp)
+        print(f"Fail to register: {resp.text}")
 
 
 def generate_new_rsa():
@@ -222,22 +264,111 @@ def admin_key_management_menu(token):
             print("无效选择，请重试")
 
 
-if __name__ == '__main__':
-    print("==================== MyBank 管理员工具 ====================")
-    print("1. 创建员工/管理员账户")
-    print("2. 管理员登录")
-    print("3. 密钥管理")
-    print("0. 退出")
+def get_blockchain_status(token):
+    """获取区块链状态"""
+    print("\n=== 获取区块链状态 ===")
 
-    choice = input("请选择操作: ")
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    url = "https://127.0.0.1:5001/admin/blockchain/status"
+    resp = requests.get(url, headers=headers, verify=False)
+    print(f"服务器响应: {resp.status_code}")
+
+    if resp.status_code == 200:
+        status = resp.json().get("status")
+        print("区块链状态:")
+        print(f"  区块数量: {status.get('block_count')}")
+        print(f"  交易数量: {status.get('transaction_count')}")
+        print(f"  待处理交易: {status.get('pending_count')}")
+
+        last_block = status.get('last_block', {})
+        print("最新区块:")
+        print(f"  区块ID: {last_block.get('block_id')}")
+        print(f"  区块哈希: {last_block.get('block_hash')}")
+        print(f"  时间戳: {last_block.get('timestamp')}")
+
+        return status
+    else:
+        print(f"获取失败: {resp.text}")
+        return None
+
+
+def verify_blockchain_transaction(token, transaction_id):
+    """验证区块链交易"""
+    print(f"\n=== 验证区块链交易 {transaction_id} ===")
+
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    url = f"https://127.0.0.1:5001/admin/blockchain/verify/{transaction_id}"
+    resp = requests.get(url, headers=headers, verify=False)
+    print(f"服务器响应: {resp.status_code}")
+
+    if resp.status_code == 200:
+        result = resp.json().get("result")
+        verified = result.get("verified", False)
+
+        if verified:
+            print("√ 交易验证成功!")
+            print(f"  区块ID: {result.get('block_id')}")
+            print(f"  区块哈希: {result.get('block_hash')}")
+            print(f"  时间戳: {result.get('timestamp')}")
+        else:
+            print("✗ 交易验证失败!")
+            print(f"  原因: {result.get('message')}")
+
+        return result
+    else:
+        print(f"验证失败: {resp.text}")
+        return None
+
+
+def admin_blockchain_menu(token):
+    """管理员区块链管理菜单"""
+    while True:
+        print("\n===== 区块链管理 =====")
+        print("1. 查看区块链状态")
+        print("2. 验证交易")
+        print("0. 返回主菜单")
+
+        choice = input("请选择操作: ")
+
+        if choice == "1":
+            # 查看区块链状态
+            get_blockchain_status(token)
+
+        elif choice == "2":
+            # 验证交易
+            transaction_id = int(input("请输入交易ID: "))
+            verify_blockchain_transaction(token, transaction_id)
+
+        elif choice == "0":
+            break
+
+        else:
+            print("无效选项，请重试")
+
+
+if __name__ == '__main__':
+    print("==================== MyBank Administrator Tools ====================")
+    print("1. Create an employee/administrator account")
+    print("2. Administrator login")
+    print("3. Key management")
+    print("4. Blockchain management")
+    print("0. Logout")
+
+    choice = input("Please select operation: ")
 
     if choice == "1":
-        name = input("输入姓名: ")
-        email = input("输入邮箱: ")
-        password = input("输入密码: ")
-        phone = input("输入电话: ")
-        address = input("输入地址: ")
-        role = input("输入角色 (system_admin/bank_employee): ")
+        name = input("Enter name: ")
+        email = input("Enter email: ")
+        password = input("Enter password: ")
+        phone = input("Enter phone: ")
+        address = input("Enter address: ")
+        role = input("Enter role (system_admin/bank_employee): ")
         employee_creation(name, email, password, phone, address, role)
 
     elif choice == "2":
@@ -256,6 +387,18 @@ if __name__ == '__main__':
         key_name = input("请输入密钥名称: ")
         key_version = input("请输入密钥版本 [默认: v1]: ") or "v1"
         generate_new_aes(key_name, "symmetric", 30, key_version)
+
+    elif choice == "4":
+        # 区块链管理
+        email = input("输入管理员邮箱: ")
+        password = getpass.getpass("输入密码: ")
+        token = admin_login(email, password)
+
+        if token:
+            print("登录成功!")
+            admin_blockchain_menu(token)
+        else:
+            print("登录失败!")
 
     elif choice == "0":
         print("谢谢使用，再见!")

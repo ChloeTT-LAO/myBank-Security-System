@@ -3,14 +3,13 @@ from sqlalchemy.orm import sessionmaker
 from config.config import DATABASE_URI
 from security.key_management import generate_encrypted_key, store_key, backup_keys, restore_keys_from_backup, \
     rotate_key, list_all_keys
-from security.encryption import generate_rsa_keypair, serialize_private_key_to_pem, serialize_public_key_to_pem, rsa_encrypt_symmetric_key, load_public_key_from_pem, generate_aes_256_key
-import datetime
-from config.mybank_db import KeyManagement
+from security.encryption import generate_rsa_keypair, serialize_private_key_to_pem, serialize_public_key_to_pem
+
 
 engine = create_engine(DATABASE_URI)
 Session = sessionmaker(bind=engine)
 
-def generate_rsa_key(admin_id):
+def generate_rsa_key():
     private_key, public_key = generate_rsa_keypair()
     private_pem = serialize_private_key_to_pem(private_key)
     public_pem = serialize_public_key_to_pem(public_key)
@@ -28,7 +27,7 @@ def generate_rsa_key(admin_id):
     print("🔐 RSA 密钥对已生成并保存到文件：private_key.pem 和 public_key.pem")
 
 
-def generate_aes_key(key_name: str, admin_id, key_type='symmetric', key_version='v1', expiry_days=30):
+def generate_aes_key(key_name: str, key_type='symmetric', key_version='v1', expiry_days=30):
     aes_key_encrypt = generate_encrypted_key()
     new_key = store_key(aes_key_encrypt, key_name, key_type, key_version, expiry_days)
 

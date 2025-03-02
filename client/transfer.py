@@ -20,8 +20,7 @@ key_name = "user_transaction"
 
 
 def transfer(source_account_number: str, destination_account_number: str, amount: Union[str, float, Decimal],
-             note: str = "Transfer", user_id: int = None, hmac_key: bytes = None, verification_code: str = None) -> \
-Union[Tuple[int, Decimal], Dict[str, Any]]:
+             note: str = "Transfer", user_id: int = None, hmac_key: bytes = None, verification_code: str = None):
     """
     客户端转账函数，支持高价值交易验证
     返回交易ID和余额，或者需要额外验证的信息

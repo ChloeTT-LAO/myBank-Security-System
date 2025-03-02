@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask
 from client.client_api import client_bp
 from employee.employee_api import employee_bp
 from security.sign_verify import verify_data_signature
@@ -7,20 +7,16 @@ import os
 
 app = Flask(__name__)
 
-# 加载配置（可选，如果你在 config.py 中有Flask相关的配置）
-# app.config.from_pyfile('config.py')
 
 # 注册各个蓝图，设置对应的 URL 前缀
 app.register_blueprint(client_bp, url_prefix='/client')
 app.register_blueprint(employee_bp, url_prefix='/employee')
 app.register_blueprint(admin_bp, url_prefix='/admin')
 
+
 @app.route('/')
 def index():
     return "Welcome to MyBank API. Available endpoints: /client, /employee, /admin"
-
-
-
 
 
 if __name__ == '__main__':
