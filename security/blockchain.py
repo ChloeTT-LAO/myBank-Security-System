@@ -129,15 +129,14 @@ class SimpleBlockchain:
         return block_hash, nonce
 
     def add_transaction(self, transaction_id: int) -> Dict[str, Any]:
-        """添加交易到区块链"""
+        """Add a transaction to the blockchain"""
         session = Session()
         try:
-            # 获取交易数据
             transaction = session.query(Transactions).filter_by(transaction_id=transaction_id).first()
             if not transaction:
                 raise ValueError(f"Transaction {transaction_id} not found")
 
-            # 检查交易是否已经在区块链中
+            # Check if the transaction is already in the blockchain
             existing = session.query(BlockchainTransaction).filter_by(transaction_id=transaction_id).first()
             if existing:
                 return {
@@ -147,7 +146,7 @@ class SimpleBlockchain:
                     "tx_id": existing.tx_id
                 }
 
-            # 准备交易数据
+            # Prepare trading data
             tx_data = {
                 "transaction_id": transaction.transaction_id,
                 "source_account_id": transaction.source_account_id,
@@ -156,7 +155,7 @@ class SimpleBlockchain:
                 "transaction_type": transaction.transaction_type,
                 "status": transaction.status,
                 "timestamp": transaction.timestamp.isoformat(),
-                # 不包含加密的敏感数据
+                # Does not contain encrypted sensitive data
             }
 
             # 计算交易哈希
@@ -362,10 +361,9 @@ blockchain = SimpleBlockchain()
 
 
 def record_transaction(transaction_id: int, user_id: int = None) -> Dict[str, Any]:
-    """将交易记录到区块链"""
+    """Record the transaction to the blockchain"""
     result = blockchain.add_transaction(transaction_id)
 
-    # 记录操作
     if user_id:
         log_operation(
             user_id,

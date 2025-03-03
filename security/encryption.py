@@ -27,26 +27,23 @@ def check_password(plain_password: str, hashed_password: str) -> bool:
 
 def generate_aes_256_key() -> bytes:
     """
-    生成 256 位对称密钥
+    Generate a 256-bit symmetric key
     """
     return AESGCM.generate_key(bit_length=256)
 
 
 def aes_256_gcm_encrypt(plaintext: bytes, aes_key, aad: bytes = None):
     """
-    使用 AES-256-GCM 对明文进行加密
-    :param plaintext: 需要加密的数据（bytes类型）
-    :param aad: 附加认证数据（可选），该数据在加密时参与认证，但不加密
-    :return: 返回一个三元组 (key, nonce, ciphertext)
-             key: AESGCM 加密使用的 256 位密钥
-             nonce: 随机生成的 nonce（推荐12字节）
-             ciphertext: 加密后的密文，其中包含认证标签
+    The plaintext is encrypted using AES-256-GCM
+    :param plaintext: data to be encrypted (bytes)
+    :param aad: Additional authentication data (optional) that participates in authentication when encrypted, but is not encrypted
+    :return: Returns a triple (key, nonce, ciphertext)
+    key: 256 bit key used by AESGCM for encryption
+    nonce: randomly generated nonce (12 bytes recommended)
+    ciphertext: indicates the encrypted ciphertext that contains the authentication label
     """
-
-    # 生成一个随机的 nonce（推荐长度为12字节）
     nonce = os.urandom(12)
     aesgcm = AESGCM(aes_key)
-    # 加密数据
     ciphertext = aesgcm.encrypt(nonce, plaintext, aad)
 
     return nonce, ciphertext
@@ -54,23 +51,23 @@ def aes_256_gcm_encrypt(plaintext: bytes, aes_key, aad: bytes = None):
 
 def aes_256_gcm_decrypt(key: bytes, nonce: bytes, ciphertext: bytes, aad: bytes = None) -> bytes:
     """
-    使用 AES-256-GCM 对密文进行解密
-    :param key: 用于加密的密钥（256 位）
-    :param nonce: 加密时使用的 nonce
-    :param ciphertext: 加密后的密文（含认证标签）
-    :param aad: 附加认证数据（必须与加密时一致）
-    :return: 解密后的明文（bytes类型）
+    Use AES-256-GCM to decrypt the ciphertext
+    :param key: key for encryption (256-bit)
+    :param nonce: indicates the nonce used for encryption
+    :param ciphertext: indicates the encrypted ciphertext (including the authentication label).
+    :param aad: Additional authentication data (must be the same as when encrypted)
+    :return: decrypted plain text (bytes)
     """
     aesgcm = AESGCM(key)
     plaintext = aesgcm.decrypt(nonce, ciphertext, aad)
     return plaintext
 
 
-# ========== RSA 加密/解密对称密钥 ==========
+# ========== RSA encryption/decryption symmetric key ==========
 
 def generate_rsa_keypair(key_size=2048):
     """
-    生成一对RSA密钥 (私钥 + 公钥)
+    Generate a pair of RSA keys (private + public key)
     """
     private_key = rsa.generate_private_key(
         public_exponent=65537,
@@ -82,10 +79,7 @@ def generate_rsa_keypair(key_size=2048):
 
 def rsa_encrypt_symmetric_key(public_key, symmetric_key: bytes) -> bytes:
     """
-    用RSA公钥加密对称密钥
-    :param public_key: RSA公钥
-    :param symmetric_key: 需要加密的对称密钥 (32字节)
-    :return: 加密后的字节串
+    Encrypt symmetric keys with RSA public keys
     """
     ciphertext = public_key.encrypt(
         symmetric_key,
@@ -100,10 +94,7 @@ def rsa_encrypt_symmetric_key(public_key, symmetric_key: bytes) -> bytes:
 
 def rsa_decrypt_symmetric_key(private_key, encrypted_key: bytes) -> bytes:
     """
-    用RSA私钥解密得到对称密钥
-    :param private_key: RSA私钥
-    :param encrypted_key: RSA加密后的对称密钥
-    :return: 原始对称密钥(32字节)
+    The symmetric key is decrypted by RSA private key
     """
     plaintext = private_key.decrypt(
         encrypted_key,
@@ -118,13 +109,13 @@ def rsa_decrypt_symmetric_key(private_key, encrypted_key: bytes) -> bytes:
 
 def serialize_private_key_to_pem(private_key) -> bytes:
     """
-    将RSA私钥序列化为PEM格式，通常需要安全地存储或加密
+    Serializing an RSA private key to PEM format usually requires secure storage or encryption
     """
 
     pem = private_key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption()  # 生产环境建议加密
+        encryption_algorithm=serialization.NoEncryption()
     )
 
     return pem
@@ -132,7 +123,7 @@ def serialize_private_key_to_pem(private_key) -> bytes:
 
 def serialize_public_key_to_pem(public_key) -> bytes:
     """
-    将RSA公钥序列化为PEM格式
+    Serialize the RSA public key to PEM format
     """
     pem = public_key.public_bytes(
         encoding=serialization.Encoding.PEM,
@@ -143,7 +134,7 @@ def serialize_public_key_to_pem(public_key) -> bytes:
 
 def load_private_key_from_pem(pem_data: bytes):
     """
-    从PEM字节串加载RSA私钥
+    Load RSA private keys from PEM bytes
     """
     private_key = serialization.load_pem_private_key(
         pem_data,
@@ -154,7 +145,7 @@ def load_private_key_from_pem(pem_data: bytes):
 
 def load_public_key_from_pem(pem_data: bytes):
     """
-    从PEM字节串加载RSA公钥
+    Load an RSA public key from PEM bytes
     """
     public_key = serialization.load_pem_public_key(pem_data)
     return public_key

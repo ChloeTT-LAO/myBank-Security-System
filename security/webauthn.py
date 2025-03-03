@@ -273,20 +273,21 @@ webauthn_manager = WebAuthnManager('bankingsystem.example.com', 'MyBank')
 
 
 def register_webauthn_credential(user_id: str, username: str) -> Dict[str, Any]:
-    """注册WebAuthn凭证"""
+    """Register WebAuthn credentials"""
     return webauthn_manager.generate_registration_options(user_id, username)
 
 
 def verify_webauthn_registration(user_id: str, credential: Dict[str, Any]) -> Dict[str, Any]:
-    """验证WebAuthn注册"""
+    """Verify WebAuthn registration"""
     return webauthn_manager.verify_registration(user_id, credential)
 
 
 def authenticate_with_webauthn(username: str) -> Dict[str, Any]:
-    """使用WebAuthn进行身份验证"""
+    """Use WebAuthn for authentication"""
     return webauthn_manager.generate_authentication_options(username)
 
 
 def verify_webauthn_authentication(username: str, credential: Dict[str, Any]) -> Dict[str, Any]:
-    """验证WebAuthn身份验证"""
+    """Verify WebAuthn authentication"""
     return webauthn_manager.verify_authentication(username, credential)
+

@@ -272,14 +272,14 @@ _behavior_profilers = {}
 
 
 def get_behavior_profiler(user_id: int) -> BehavioralProfiler:
-    """获取或创建用户行为分析器"""
+    """Gets or creates a user behavior analyzer"""
     if user_id not in _behavior_profilers:
         _behavior_profilers[user_id] = BehavioralProfiler(user_id)
     return _behavior_profilers[user_id]
 
 
 def update_login_behavior(user_id: int, ip_address: str, user_agent: str) -> None:
-    """登录时更新用户行为数据"""
+    """Update user behavior data at login"""
     profiler = get_behavior_profiler(user_id)
     profiler.update_login_behavior(
         ip_address,
@@ -289,35 +289,36 @@ def update_login_behavior(user_id: int, ip_address: str, user_agent: str) -> Non
 
 
 def update_transaction_behavior(user_id: int, transaction_data: Dict) -> None:
-    """交易时更新用户行为数据"""
+    """Update user behavior data while trading"""
     profiler = get_behavior_profiler(user_id)
     profiler.update_transaction_behavior(transaction_data)
 
 
 def get_risk_level(user_id: int) -> str:
-    """获取当前用户的风险级别"""
+    """Get the risk level of the current user"""
     profiler = get_behavior_profiler(user_id)
     return profiler.get_verification_level()
 
 
 def should_require_verification(user_id: int, transaction_data: Dict) -> bool:
-    """根据风险级别确定是否需要额外验证"""
-    # 首先基于交易本身的特征判断
+    """Determine if additional validation is required based on the level of risk"""
+    # First of all, based on the characteristics of the transaction itself
     from security.integrity import is_high_risk_transaction
     if is_high_risk_transaction(transaction_data):
         return True
 
-    # 然后基于用户行为风险判断
+    # Then based on the user behavior risk judgment
     risk_level = get_risk_level(user_id)
     if risk_level == "high":
         return True
     elif risk_level == "medium":
-        # 中等风险，根据交易金额进行判断
+        # Medium risk, judging by the amount of the transaction
         amount = float(transaction_data.get('amount', 0))
         profiler = get_behavior_profiler(user_id)
         avg_amount = profiler.user_profile['transaction_patterns']['avg_amount']
-        if amount > avg_amount * 1.5:  # 交易金额显著高于平均值
+        if amount > avg_amount * 1.5:  # The transaction amount is significantly higher than the average
             return True
 
-    # 低风险或其他情况，不需要额外验证
+    # Low risk or otherwise, no additional verification is required
     return False
+

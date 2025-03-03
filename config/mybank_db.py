@@ -28,6 +28,7 @@ class Users(Base):
     account_locked_until = Column(DateTime(timezone=True), nullable=True)
     last_password_change = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc))
     require_password_change = Column(Boolean, default=False)
+    webauthn_data = Column(Text,  nullable=True)
 
     # 明文的姓名、电话、地址不再存储，改为加密存储：
     encrypted_name = Column(LargeBinary)  # 存储 AES-256-GCM 加密后的姓名
@@ -157,6 +158,7 @@ class AuditLog(Base):
     operation = Column(String(255), nullable=False)
     details = Column(Text)
     log_time = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc))
+    ip_address = Column(String(64), nullable=True)
     user_agent = Column(String(512), nullable=True)
 
     user = relationship("Users", back_populates="audit_logs")

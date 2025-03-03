@@ -20,9 +20,9 @@ def index():
 
 
 if __name__ == '__main__':
-    # 读取证书和私钥路径
+    # Read the certificate and private key path
     cert_path = os.path.join("certificate", "cert.pem")
     key_path = os.path.join("certificate", "key.pem")
 
-    # 在开发环境下启用调试模式，监听所有网络接口
     app.run(debug=True, host='0.0.0.0', port=5001, ssl_context=(cert_path, key_path))
+

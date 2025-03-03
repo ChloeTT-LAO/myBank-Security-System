@@ -1,6 +1,5 @@
 import base64
-
-from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -14,7 +13,7 @@ Session = sessionmaker(bind=engine)
 
 def sign_data(message: bytes, private_key_pem: bytes) -> bytes:
     """
-    使用私钥对消息进行签名，返回签名（二进制）
+   Sign the message with the private key, return the signature (binary)
     """
     private_key = load_private_key_from_pem(private_key_pem)
     signature = private_key.sign(
@@ -30,7 +29,7 @@ def sign_data(message: bytes, private_key_pem: bytes) -> bytes:
 
 def verify_data_signature(message: bytes, signature: bytes, public_key_pem: bytes) -> bool:
     """
-    使用公钥验证签名
+    Use a public key to verify the signature
     """
     public_key = load_public_key_from_pem(public_key_pem)
     try:

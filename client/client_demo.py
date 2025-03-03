@@ -59,7 +59,7 @@ def user_register(name: str, email: str, password: str, phone: str, address: str
     # 3. 发送注册请求
     print("Send a registration request...")
     url = "https://127.0.0.1:5001/client/register"
-    resp = requests.post(url, json=payload, headers=headers, verify=False)
+    resp = requests.post(url, json=payload, headers=headers, verify='certificate/cert.pem')
     print(f"Server response: {resp.status_code}")
 
     if resp.status_code == 201:
@@ -326,7 +326,7 @@ def user_withdraw(email: str, account_number: str, amount: str, token: str):
 
 def user_transfer(email: str, source_account_number: str, destination_account_number: str, amount: str, token: str):
     """转账操作"""
-    print(f"\n=== 从账户 {source_account_number} 转账 {amount} 到账户 {destination_account_number} ===")
+    print(f"\n=== From account {source_account_number} transfer {amount} to account {destination_account_number} ===")
 
     # 1. 构造签名消息
     timestamp = int(time.time())
@@ -350,7 +350,7 @@ def user_transfer(email: str, source_account_number: str, destination_account_nu
     # 3. 生成签名和HMAC
     signature_bytes = sign_data(message.encode('utf-8'), private_pem)
     signature_hex = signature_bytes.hex()
-    hmac_value = compute_hmac_sha256(message.encode('utf-8'), hmac_key)
+    hmac_value = compute_hmac_sha256(message.encode('utf-8'), base64.b64decode(hmac_key))
 
     # 4. 构造请求体
     payload = {
@@ -364,42 +364,37 @@ def user_transfer(email: str, source_account_number: str, destination_account_nu
         "Authorization": f"Bearer {token}"
     }
 
-    print("发送转账请求...")
+    print("Send a transfer request...")
     url = "https://127.0.0.1:5001/client/transaction/transfer"
     resp = requests.post(url, json=payload, headers=headers, verify=False)
-    print(f"服务器响应: {resp.status_code}")
+    print(f"Server response: {resp.status_code}")
 
     # 检查是否需要额外验证（高风险交易）
     if resp.status_code == 428:  # 请求需要额外验证
-        print("高风险交易，需要额外验证...")
+        print("High risk transactions require additional verification...")
 
-        # 生成当前TOTP码
-        totp = pyotp.TOTP(totp_secret)
-        current_totp = totp.now()
-        print(f"当前TOTP码: {current_totp}")
-
-        verification_code = input("请输入您的身份验证器应用中的验证码: ")
+        verification_code = 000
 
         # 添加验证码并重新请求
         payload["verification_code"] = verification_code
         resp = requests.post(url, json=payload, headers=headers, verify=False)
-        print(f"验证后服务器响应: {resp.status_code}")
+        print(f"The server responds after verification: {resp.status_code}")
 
     if resp.status_code == 200:
         data = resp.json()
         transaction_id = data.get("transaction_id")
         balance = data.get("balance")
-        print(f"转账成功! 交易ID: {transaction_id}")
-        print(f"当前余额: {balance}")
+        print(f"Transfer successful! Transaction ID: {transaction_id}")
+        print(f"current balance: {balance}")
         return transaction_id, balance
     else:
-        print(f"转账失败: {resp.text}")
+        print(f"Transfer failure: {resp.text}")
         return None, None
 
 
 def client_send_message(email: str, employee_id: int, message_text: str, token: str):
     """向银行职员发送加密消息"""
-    print(f"\n=== 向员工 {employee_id} 发送加密消息 ===")
+    print(f"\n=== Send encrypted message to {employee_id} ===")
 
     # 1. 构造签名消息
     timestamp = int(time.time())
@@ -414,13 +409,13 @@ def client_send_message(email: str, employee_id: int, message_text: str, token: 
         with open(f"user_secret/{safe_email}_hmac_key.txt", "rb") as hmac_file:
             hmac_key = hmac_file.read()
     except FileNotFoundError as e:
-        print(f"错误: 找不到密钥文件 - {str(e)}")
+        print(f"Error: Key file not found - {str(e)}")
         return None
 
     # 3. 生成签名和HMAC
     signature_bytes = sign_data(message_str.encode('utf-8'), private_pem)
     signature_hex = signature_bytes.hex()
-    hmac_value = compute_hmac_sha256(message_str.encode('utf-8'), hmac_key)
+    hmac_value = compute_hmac_sha256(message_str.encode('utf-8'), base64.b64decode(hmac_key))
 
     # 4. 构造请求体
     payload = {
@@ -434,18 +429,18 @@ def client_send_message(email: str, employee_id: int, message_text: str, token: 
         "Authorization": f"Bearer {token}"
     }
 
-    print("发送加密消息...")
+    print("Sending encrypted message...")
     url = "https://127.0.0.1:5001/client/message/send"
     resp = requests.post(url, json=payload, headers=headers, verify=False)
-    print(f"服务器响应: {resp.status_code}")
+    print(f"Server respond: {resp.status_code}")
 
     if resp.status_code == 200:
         data = resp.json()
         message_id = data.get("message_id")
-        print(f"消息发送成功! 消息ID: {message_id}")
+        print(f"Send message successfully! Message ID: {message_id}")
         return message_id
     else:
-        print(f"消息发送失败: {resp.text}")
+        print(f"Fail to send message: {resp.text}")
         return None
 
 
@@ -558,8 +553,8 @@ def update_profile(token: str, phone: str = None, address: str = None):
 
 
 def register_webauthn(email, token):
-    """注册WebAuthn凭证"""
-    print("\n=== 注册WebAuthn凭证 ===")
+    """Register WebAuthn credentials"""
+    print("\n=== Register WebAuthn credentials ===")
 
     headers = {
         "Authorization": f"Bearer {token}"
@@ -567,16 +562,16 @@ def register_webauthn(email, token):
 
     url = "https://127.0.0.1:5001/client/webauthn/register"
     resp = requests.post(url, headers=headers, json={}, verify=False)
-    print(f"服务器响应: {resp.status_code}")
+    print(f"Server Respond: {resp.status_code}")
 
     if resp.status_code == 200:
         options = resp.json().get("options")
 
-        print("请在浏览器中完成WebAuthn注册...")
-        print("注册选项:", json.dumps(options, indent=2))
+        print("Complete the WebAuthn registration in your browser...")
+        print("Registration option:", json.dumps(options, indent=2))
 
-        # 模拟浏览器返回的凭证
-        # 在实际情况下，这应该由浏览器的WebAuthn API生成
+        # Simulate the credentials returned by the browser
+        # In practice, this should be generated by the browser's WebAuthn API
         credential = {
             "id": "simulated-credential-id-" + str(uuid.uuid4()),
             "rawId": base64.b64encode(os.urandom(32)).decode('ascii'),
@@ -590,11 +585,11 @@ def register_webauthn(email, token):
                 "attestationObject": {
                     "fmt": "none",
                     "authData": {
-                        "rpIdHash": hashlib.sha256(b"bankingsystem.example.com").digest(),
+                        "rpIdHash": base64.b64encode(hashlib.sha256(b"bankingsystem.example.com").digest()).decode('ascii'),
                         "flags": 0x41,  # AT and UP flags
                         "counter": 1,
                         "attestedCredentialData": {
-                            "aaguid": os.urandom(16),
+                            "aaguid": base64.b64encode(os.urandom(16)).decode('ascii'),
                             "credentialId": base64.b64encode(os.urandom(32)).decode('ascii'),
                             "credentialPublicKey": base64.b64encode(os.urandom(65)).decode('ascii')
                         }
@@ -603,7 +598,7 @@ def register_webauthn(email, token):
             }
         }
 
-        # 验证注册
+        # Verify registration
         verify_url = "https://127.0.0.1:5001/client/webauthn/register/verify"
         verify_resp = requests.post(
             verify_url,
@@ -611,28 +606,28 @@ def register_webauthn(email, token):
             json={"credential": credential},
             verify=False
         )
-        print(f"验证响应: {verify_resp.status_code}")
+        print(f"Validation response: {verify_resp.status_code}")
         print(verify_resp.json())
 
         return verify_resp.json()
     else:
-        print(f"注册失败: {resp.text}")
+        print(f"fail to register: {resp.text}")
         return None
 
 
 def webauthn_login(email):
-    """使用WebAuthn登录"""
-    print("\n=== WebAuthn登录 ===")
+    """WebAuthn Login"""
+    print("\n=== WebAuthn Login ===")
 
     url = "https://127.0.0.1:5001/client/webauthn/login"
     resp = requests.post(url, json={"username": email}, verify=False)
-    print(f"服务器响应: {resp.status_code}")
+    print(f"Server respond: {resp.status_code}")
 
     if resp.status_code == 200:
         options = resp.json().get("options")
 
-        print("请在浏览器中完成WebAuthn验证...")
-        print("验证选项:", json.dumps(options, indent=2))
+        print("Complete WebAuthn verification in your browser...")
+        print("Validation option:", json.dumps(options, indent=2))
 
         # 模拟浏览器返回的凭证
         # 在实际情况下，这应该由浏览器的WebAuthn API生成
@@ -662,17 +657,17 @@ def webauthn_login(email):
             },
             verify=False
         )
-        print(f"验证响应: {verify_resp.status_code}")
+        print(f"Validation response: {verify_resp.status_code}")
 
         if verify_resp.status_code == 200:
             token = verify_resp.json().get("token")
-            print("登录成功!")
+            print("login successfully!")
             return token
         else:
-            print(f"登录失败: {verify_resp.text}")
+            print(f"login failure: {verify_resp.text}")
             return None
     else:
-        print(f"登录请求失败: {resp.text}")
+        print(f"Login request failed: {resp.text}")
         return None
 
 
@@ -827,19 +822,19 @@ if __name__ == "__main__":
                         account_number = user_create_account(email, account_type, token)
 
                     elif sub_choice == "2":
-                        account_number = input("请输入账号: ")
-                        amount = input("请输入金额: ")
+                        account_number = input("Please enter your account number: ")
+                        amount = input("Please enter the amount: ")
                         user_deposit(email, account_number, amount, token)
 
                     elif sub_choice == "3":
-                        account_number = input("请输入账号: ")
-                        amount = input("请输入金额: ")
+                        account_number = input("Please enter your account number: ")
+                        amount = input("Please enter the amount: ")
                         user_withdraw(email, account_number, amount, token)
 
                     elif sub_choice == "4":
-                        source_account = input("请输入源账号: ")
-                        destination_account = input("请输入目标账号: ")
-                        amount = input("请输入金额: ")
+                        source_account = input("Please enter the source account number: ")
+                        destination_account = input("Please enter the target account number: ")
+                        amount = input("Please enter the amount: ")
                         user_transfer(email, source_account, destination_account, amount, token)
 
                     elif sub_choice == "5":

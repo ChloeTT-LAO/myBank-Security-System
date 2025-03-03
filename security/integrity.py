@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import hmac
@@ -21,9 +22,8 @@ UNUSUAL_TRANSACTION_TYPES = ["international_transfer", "crypto_exchange"]
 
 def generate_transaction_hash(transaction_data: Dict[str, Any]) -> str:
     """
-    为交易生成哈希值，用于完整性验证
+    Generate a hash for transaction integrity verification
     """
-    # 创建交易数据的规范化表示
     canonical_data = {
         "source_account_id": transaction_data.get("source_account_id"),
         "destination_account_id": transaction_data.get("destination_account_id"),
@@ -32,13 +32,11 @@ def generate_transaction_hash(transaction_data: Dict[str, Any]) -> str:
         "timestamp": transaction_data.get("timestamp").isoformat() if isinstance(transaction_data.get("timestamp"),
                                                                                  datetime.datetime) else transaction_data.get(
             "timestamp"),
-        "details": transaction_data.get("details", "")
+        "details": base64.b64encode(transaction_data.get("details", "")).decode('utf-8')
     }
 
-    # 将数据转换为JSON字符串并排序键，确保一致性
     canonical_json = json.dumps(canonical_data, sort_keys=True)
 
-    # 计算哈希值
     return hashlib.sha256(canonical_json.encode('utf-8')).hexdigest()
 
 
@@ -88,7 +86,7 @@ def generate_transaction_signature(transaction_data: Dict[str, Any], hmac_key: b
         "timestamp": transaction_data.get("timestamp").isoformat() if isinstance(transaction_data.get("timestamp"),
                                                                                  datetime.datetime) else transaction_data.get(
             "timestamp"),
-        "details": transaction_data.get("details", "")
+        "details": base64.b64encode(transaction_data.get("details", "")).decode('utf-8')
     }
 
     # 将数据转换为JSON字符串
@@ -161,6 +159,10 @@ def verify_high_value_transaction(transaction_id: Optional[int], user_id: int, v
 
         # 使用TOTP进行额外验证
         totp = pyotp.TOTP(user.totp_secret)
+        current_totp = totp.now()
+        print(f"Current TOTP code: {current_totp}")
+        verification_code = input("Please enter the verification code in your authenticator application: ")
+
         verification_result = totp.verify(verification_code)
 
         # 如果有交易ID，记录验证结果

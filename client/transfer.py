@@ -22,18 +22,18 @@ key_name = "user_transaction"
 def transfer(source_account_number: str, destination_account_number: str, amount: Union[str, float, Decimal],
              note: str = "Transfer", user_id: int = None, hmac_key: bytes = None, verification_code: str = None):
     """
-    客户端转账函数，支持高价值交易验证
-    返回交易ID和余额，或者需要额外验证的信息
+    Client-side transfer function to support high-value transaction verification
+    Return the transaction ID and balance, or information that requires additional verification
     """
     session = Session()
     try:
-        # 将amount转换为Decimal
+        # Convert the amount to Decimal
         if isinstance(amount, str):
             amount = Decimal(amount)
         elif isinstance(amount, float):
             amount = Decimal(str(amount))
 
-        # 查找源账户和目标账户
+        # Find source and destination accounts
         source_account = session.query(Accounts).filter_by(
             account_number_hash=hashlib.sha256(source_account_number.encode('utf-8')).hexdigest()).first()
         destination_account = session.query(Accounts).filter_by(
@@ -45,7 +45,7 @@ def transfer(source_account_number: str, destination_account_number: str, amount
         if source_account.balance < amount:
             raise Exception("Insufficient funds.")
 
-        # 创建交易数据字典，用于风险评估和完整性校验
+        # Create a transaction data dictionary for risk assessment and integrity check
         current_time = datetime.datetime.now(tz=datetime.timezone.utc)
         transaction_data = {
             "source_account_id": source_account.account_id,
@@ -59,15 +59,15 @@ def transfer(source_account_number: str, destination_account_number: str, amount
         if user_id:
             update_transaction_behavior(user_id, transaction_data)
 
-            # 基于行为风险和交易特征决定是否需要额外验证
+        # Determine whether additional verification is required based on behavioral risk and transaction characteristics
         requires_verification = False
         if user_id:
             requires_verification = should_require_verification(user_id, transaction_data)
         else:
-            # 如果没有用户ID，回退到基本的高风险交易判断
+            # If there is no user ID, fall back to the basic high risk transaction judgment
             requires_verification = is_high_risk_transaction(transaction_data)
 
-        # 如果需要验证但没有提供验证码
+        # If verification is required but no verification code is provided
         if requires_verification and not verification_code:
             return {
                 "status": "additional_verification_required",
@@ -76,52 +76,52 @@ def transfer(source_account_number: str, destination_account_number: str, amount
                 "reason": "Risk assessment" if user_id else "High value transaction"
             }
 
-        # 检查是否需要额外验证
+        # Check if additional validation is required
         if is_high_risk_transaction(transaction_data) and not verification_code:
-            # 返回需要额外验证的信息
+            # Returns information that requires additional validation
             return {
                 "status": "additional_verification_required",
                 "message": "This high-value transaction requires additional verification.",
                 "transaction_data": transaction_data
             }
 
-        # 有验证码但不是高风险交易，不需要验证
-        # 是高风险交易且有验证码，则在后面会验证
+        # There is a verification code, but it is not a high-risk transaction and does not require verification
+        # If it is a high-risk transaction and has a verification code, it will be verified later
 
-        # 执行转账
+        # Execute a transfer
         source_account.balance -= amount
         destination_account.balance += amount
         balance = source_account.balance
 
-        # 加密交易备注
+        # Crypto Trading Notes
         aes_key, key_version = retrieve_key_from_db(key_name=key_name)
         note_nonce, encrypted_note = aes_256_gcm_encrypt(note.encode('utf-8'), aes_key)
 
-        # 更新交易数据中的详情为加密后的内容，用于完整性校验
+        # Update the details in the transaction data to the encrypted content for integrity check
         transaction_data["details"] = encrypted_note
         transaction_data["timestamp"] = current_time
 
-        # 计算交易完整性校验和
+        # Calculate the transaction integrity checksum
         integrity_checksum = generate_transaction_hash(transaction_data)
 
-        # 生成交易签名（如果提供了HMAC密钥）
+        # Generate transaction signatures (if HMAC keys are provided)
         transaction_signature = None
         if hmac_key:
             transaction_signature = generate_transaction_signature(transaction_data, hmac_key)
 
-        # 确定是否需要验证和验证状态
+        # Determine whether validation and validation status is required
         requires_verification = is_high_risk_transaction(transaction_data)
         verification_status = 'not_required'
         if requires_verification:
-            verification_status = 'pending'  # 默认为等待验证
+            verification_status = 'pending'  # The default is waiting for verification
 
-        # 创建交易记录
+        # Create a transaction record
         transaction = Transactions(
             source_account_id=source_account.account_id,
             destination_account_id=destination_account.account_id,
             amount=amount,
             transaction_type='transfer',
-            status='pending',  # 初始状态为等待
+            status='pending',  # The initial state is waiting
             timestamp=current_time,
             encrypted_note=encrypted_note,
             note_nonce=note_nonce,
@@ -132,16 +132,18 @@ def transfer(source_account_number: str, destination_account_number: str, amount
             requires_additional_verification=requires_verification,
             verification_status=verification_status
         )
+        print(f"integrity_checksum: {transaction.integrity_checksum}")
+        print(f"transaction_signature: {transaction.transaction_signature}")
 
         session.add(transaction)
         session.commit()
 
-        # 如果是高风险交易且提供了验证码，验证它
+        # If it is a high-risk transaction and a captCHA is provided, verify it
         if requires_verification and verification_code and user_id:
             from security.integrity import verify_high_value_transaction
             verification_success = verify_high_value_transaction(transaction.transaction_id, user_id, verification_code)
 
-            # 更新交易状态
+            # Update trading status
             transaction = session.query(Transactions).get(transaction.transaction_id)
             if verification_success:
                 transaction.status = 'completed'
@@ -149,7 +151,7 @@ def transfer(source_account_number: str, destination_account_number: str, amount
             else:
                 transaction.status = 'rejected'
                 transaction.verification_status = 'failed'
-                # 回滚转账
+                # Rollback transfer
                 source_account.balance += amount
                 destination_account.balance -= amount
                 balance = source_account.balance
@@ -159,11 +161,11 @@ def transfer(source_account_number: str, destination_account_number: str, amount
             if not verification_success:
                 raise Exception("Transaction verification failed. The transaction has been rejected.")
         elif not requires_verification:
-            # 如果不需要验证，直接完成交易
+            # If no verification is required, complete the transaction directly
             transaction.status = 'completed'
             session.commit()
 
-        # 记录操作
+        # record operation
         if user_id:
             log_operation(
                 user_id,

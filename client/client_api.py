@@ -153,7 +153,6 @@ def api_verify_webauthn_login():
                 user_id=user.user_id,
                 session_token=token,
                 login_time=datetime.datetime.now(tz=datetime.timezone.utc),
-                login_method="webauthn"
             )
             session.add(new_session)
             session.commit()
@@ -415,34 +414,34 @@ def client_transfer(current_user):
             "requires_verification": True
         }), 428  # 428 Precondition Required
 
-    try:
-        result = transfer(
-            source_account_number,
-            destination_account_number,
-            amount,
-            "Transfer",
-            current_user.user_id,
-            current_user.hmac_key,
-            verification_code
-        )
+    # try:
+    result = transfer(
+        source_account_number,
+        destination_account_number,
+        amount,
+        "Transfer",
+        current_user.user_id,
+        current_user.hmac_key,
+        verification_code
+    )
 
-        # 检查是否需要额外验证
-        if isinstance(result, dict) and result.get("status") == "additional_verification_required":
-            return jsonify(result), 428
+    # 检查是否需要额外验证
+    if isinstance(result, dict) and result.get("status") == "additional_verification_required":
+        return jsonify(result), 428
 
-        transaction_id, balance = result
+    transaction_id, balance = result
 
-        # 记录操作
-        log_operation(current_user.user_id, "fund_transfer",
-                      f"Transferred {amount} from {source_account_number} to {destination_account_number}")
+    # 记录操作
+    log_operation(current_user.user_id, "fund_transfer",
+                  f"Transferred {amount} from {source_account_number} to {destination_account_number}")
 
-        return jsonify({
-            'transaction_id': transaction_id,
-            'balance': balance
-        }), 200
+    return jsonify({
+        'transaction_id': transaction_id,
+        'balance': balance
+    }), 200
 
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
+    # except Exception as e:
+    #     return jsonify({'error': str(e)}), 400
 
 
 # 高值交易验证

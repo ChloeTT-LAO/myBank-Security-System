@@ -78,28 +78,22 @@ def retrieve_key_from_db(key_name: str, key_version: str = None):
 
 def rotate_key(old_key_id, admin_user_id, key_type='symmetric', expiry_days=30):
     """
-    密钥轮换：将旧密钥设为过期，并生成新密钥
-    同时执行必要的数据重加密操作
+    Key rotation: sets the old key to expire and generates a new key
     """
     session = Session()
     try:
-        # 标记旧密钥为过期
         old_key = session.query(KeyManagement).filter_by(key_id=old_key_id).first()
         if not old_key:
             raise Exception("Old key not found.")
 
-        # 获取旧密钥的关键信息
         key_name = old_key.key_name
         old_version = old_key.key_version
 
-        # 生成新版本号
         new_version = f"v{int(old_version.replace('v', '')) + 1}"
 
-        # 设置旧密钥的过期时间为当前时间
         old_key.expiry_date = datetime.datetime.now(tz=datetime.timezone.utc)
         session.commit()
 
-        # 生成新密钥
         new_key_encrypted = generate_encrypted_key()
         new_key_dict = store_key(
             new_key_encrypted,
@@ -109,7 +103,6 @@ def rotate_key(old_key_id, admin_user_id, key_type='symmetric', expiry_days=30):
             expiry_days=expiry_days
         )
 
-        # 记录密钥轮换操作
         log_operation(
             admin_user_id,
             "key_rotation",
@@ -133,8 +126,8 @@ def rotate_key(old_key_id, admin_user_id, key_type='symmetric', expiry_days=30):
 
 def backup_keys(admin_user_id, backup_password, backup_location="key_backups"):
     """
-    将当前所有有效密钥备份到安全位置
-    备份文件本身使用管理员提供的密码加密
+    Back up all currently valid keys to a secure location
+    The backup file itself is encrypted using the password provided by the administrator
     """
     from cryptography.fernet import Fernet
     from cryptography.hazmat.primitives import hashes
@@ -142,11 +135,11 @@ def backup_keys(admin_user_id, backup_password, backup_location="key_backups"):
 
     session = Session()
     try:
-        # 创建备份目录（如果不存在）
+        # Create a backup directory if it does not exist
         if not os.path.exists(backup_location):
             os.makedirs(backup_location)
 
-        # 获取当前所有有效密钥
+        # Gets all current valid keys
         current_time = datetime.datetime.now(tz=datetime.timezone.utc)
         valid_keys = session.query(KeyManagement).filter(
             KeyManagement.expiry_date > current_time
@@ -155,7 +148,7 @@ def backup_keys(admin_user_id, backup_password, backup_location="key_backups"):
         if not valid_keys:
             raise Exception("No valid keys found to backup")
 
-        # 准备备份数据
+        # Preparing backup data
         backup_data = []
         for key in valid_keys:
             backup_data.append({
@@ -167,7 +160,7 @@ def backup_keys(admin_user_id, backup_password, backup_location="key_backups"):
                 "expiry_date": key.expiry_date.isoformat()
             })
 
-        # 从密码派生加密密钥
+        # Derive the encryption key from the password
         salt = os.urandom(16)
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
@@ -177,20 +170,20 @@ def backup_keys(admin_user_id, backup_password, backup_location="key_backups"):
         )
         backup_key = base64.urlsafe_b64encode(kdf.derive(backup_password.encode()))
 
-        # 使用Fernet对称加密备份数据
+        # Backup data using Fernet symmetric encryption
         fernet = Fernet(backup_key)
         encrypted_data = fernet.encrypt(json.dumps(backup_data).encode())
 
-        # 创建备份文件名
+        # Create a backup File name
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_filename = f"{backup_location}/key_backup_{timestamp}.enc"
 
-        # 写入备份文件（salt + 加密数据）
+        # Write backup files (salt + encrypted data)
         with open(backup_filename, "wb") as f:
             f.write(salt)
             f.write(encrypted_data)
 
-        # 记录备份操作
+        # Record backup operation
         log_operation(
             admin_user_id,
             "key_backup",
@@ -211,7 +204,7 @@ def backup_keys(admin_user_id, backup_password, backup_location="key_backups"):
 
 def restore_keys_from_backup(admin_user_id, backup_file, backup_password):
     """
-    从备份文件恢复密钥
+    Recover keys from backup files
     """
     from cryptography.fernet import Fernet
     from cryptography.hazmat.primitives import hashes
@@ -219,15 +212,15 @@ def restore_keys_from_backup(admin_user_id, backup_file, backup_password):
 
     session = Session()
     try:
-        # 读取备份文件
+        # Reading backup files
         with open(backup_file, "rb") as f:
             file_content = f.read()
 
-        # 提取salt（前16字节）和加密数据
+        # Extract salt (first 16 bytes) and encrypted data
         salt = file_content[:16]
         encrypted_data = file_content[16:]
 
-        # 从密码派生解密密钥
+        # Derive the decryption key from the password
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
@@ -236,26 +229,26 @@ def restore_keys_from_backup(admin_user_id, backup_file, backup_password):
         )
         backup_key = base64.urlsafe_b64encode(kdf.derive(backup_password.encode()))
 
-        # 解密数据
+        # Decrypt data
         fernet = Fernet(backup_key)
         try:
             decrypted_data = json.loads(fernet.decrypt(encrypted_data).decode())
         except Exception:
             raise Exception("Invalid backup password or corrupted backup file")
 
-        # 恢复密钥到数据库
+        # Restore key to database
         restored_count = 0
         for key_data in decrypted_data:
-            # 检查密钥是否已存在
+            # Check whether the key exists
             existing_key = session.query(KeyManagement).filter_by(
                 key_name=key_data["key_name"],
                 key_version=key_data["key_version"]
             ).first()
 
             if existing_key:
-                continue  # 跳过已存在的密钥
+                continue
 
-            # 创建新密钥记录
+            # Create a new key record
             expiry_date = datetime.datetime.fromisoformat(key_data["expiry_date"])
             new_key = KeyManagement(
                 key_name=key_data["key_name"],
@@ -270,7 +263,7 @@ def restore_keys_from_backup(admin_user_id, backup_file, backup_password):
 
         session.commit()
 
-        # 记录恢复操作
+        # Record recovery operation
         log_operation(
             admin_user_id,
             "key_restore",

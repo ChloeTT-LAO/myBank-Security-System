@@ -19,7 +19,7 @@ Session = sessionmaker(bind=engine)
 # 定义常量
 MAX_FAILED_ATTEMPTS = 5  # 最大失败尝试次数
 LOCKOUT_DURATION = 15 * 60  # 锁定时间（秒）
-SESSION_TIMEOUT = 5 * 60  # 会话超时时间（秒）
+SESSION_TIMEOUT = 30 * 60  # 会话超时时间（秒）
 IP_TRACKING_ENABLED = True  # 是否启用IP追踪
 key_name = "user_info"
 
@@ -215,7 +215,7 @@ def logout(session_token: str):
 
 def get_session(token: str, ip_address: str = None, user_agent: str = None):
     """
-    获取有效的会话，如果 logout_time 不为空或记录不存在则返回 None
+    Gets a valid session, returning None if logout_time is not empty or the record does not exist
     """
     session = Session()
     try:
@@ -227,7 +227,7 @@ def get_session(token: str, ip_address: str = None, user_agent: str = None):
         if not user_session:
             return None
 
-        # 检查会话是否超时
+        # Check whether the session times out
         current_time = datetime.datetime.now(tz=datetime.timezone.utc)
         time_since_activity = (current_time - user_session.last_activity).total_seconds()
 

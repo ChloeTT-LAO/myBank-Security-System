@@ -32,11 +32,10 @@ def admin_required(f):
             return jsonify({"error": "Missing or invalid Authorization header"}), 401
 
         token = auth_header.replace("Bearer ", "").strip()
-        session_obj = get_session(token)
-        if not session_obj:
+        user_id = get_session(token)
+        if not user_id:
             return jsonify({'error': 'Invalid or expired session'}), 401
 
-        user_id = session_obj.user_id
         user = session.query(Users).filter_by(user_id=user_id).first()
         if user.role.value != 'system_admin':
             return jsonify({'error': 'Admin privileges required'}), 403
