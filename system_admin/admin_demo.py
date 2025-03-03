@@ -20,23 +20,23 @@ def employee_creation(name: str, email: str, password: str, phone: str, address:
 
     print("\n=== Register a new employee/admin ===")
 
-    # 确保存储目录存在
+    # Ensure storage directory exists
     ensure_directory("employee_secret")
 
-    # 1. 生成本地RSA密钥对
+    # 1. Generate local RSA key pair
     print("Generate an RSA key pair...")
     private_key, public_key = generate_rsa_keypair()
     private_pem = serialize_private_key_to_pem(private_key)
     public_pem = serialize_public_key_to_pem(public_key)
 
-    # 保存私钥到文件
+    # Save private key to file
     safe_email = email.replace("@", "_at_").replace(".", "_dot_")
     with open(f"employee_secret/{safe_email}_private_key.pem", "wb") as private_file:
         private_file.write(private_pem)
         private_file.close()
     print(f"The private key is saved to employee_secret/{safe_email}_private_key.pem")
 
-    # 2. 构造请求体
+    # 2. Construct request body
     payload = {
         "name": name,
         "address": address,
@@ -53,7 +53,7 @@ def employee_creation(name: str, email: str, password: str, phone: str, address:
     if user_agent:
         headers["User-Agent"] = user_agent
 
-    # 3. 发送注册请求
+    # 3. Send registration request
     print("Send a registration request...")
     url = "https://127.0.0.1:5001/admin/register"
     resp = requests.post(url, json=payload, headers=headers, verify=False)
@@ -64,19 +64,19 @@ def employee_creation(name: str, email: str, password: str, phone: str, address:
         totp_secret = resp_data.get("totp_secret")
         hmac_key = resp_data.get("hmac_key")
 
-        # 保存TOTP密钥
+        # Save TOTP key
         if totp_secret:
             with open(f"employee_secret/{safe_email}_totp_secret.txt", "w") as f:
                 f.write(totp_secret)
             print(f"TOTP key is saved to employee_secret/{safe_email}_totp_secret.txt")
 
-            # 显示TOTP二维码URL
+            # Display TOTP QR code URL
             totp_uri = pyotp.totp.TOTP(totp_secret).provisioning_uri(
                 name=email, issuer_name="MyBank")
             print(f"TOTP URI: {totp_uri}")
             print("Use Google Authenticator or another TOTP application to scan this URI to set up two-factor authentication")
 
-        # 保存HMAC密钥
+        # Save HMAC key
         if hmac_key:
             with open(f"employee_secret/{safe_email}_hmac_key.txt", "wb") as f:
                 f.write(base64.b64decode(hmac_key))
@@ -88,9 +88,9 @@ def employee_creation(name: str, email: str, password: str, phone: str, address:
 
 
 def generate_new_rsa():
-    """生成新的RSA密钥对"""
+    """Generate a new RSA key pair"""
     url = "https://127.0.0.1:5001/admin/keys/new_rsa"
-    # 因为是自签名证书，需要用 verify=False 或指定证书
+    # Because it's a self-signed certificate, need to use verify=False or specify the certificate
     resp = requests.post(url, verify=False)
     print("Response status:", resp.status_code)
     print("Response body:", resp.text)
@@ -98,7 +98,7 @@ def generate_new_rsa():
 
 
 def generate_new_aes(key_name, key_type, expiry_days, key_version):
-    """生成新的AES密钥"""
+    """Generate a new AES key"""
     payload = {
         "key_name": key_name,
         "key_type": key_type,
@@ -112,10 +112,10 @@ def generate_new_aes(key_name, key_type, expiry_days, key_version):
     return resp
 
 
-# 新增密钥管理功能
+# New key management functions
 
 def admin_login(email: str, password: str):
-    """管理员登录"""
+    """Admin login"""
     timestamp = int(time.time())
     message = f"login|email={email}|timestamp={timestamp}"
 
@@ -132,7 +132,7 @@ def admin_login(email: str, password: str):
         "password": password
     }
 
-    url = "https://127.0.0.1:5001/client/login"  # 使用通用登录端点
+    url = "https://127.0.0.1:5001/client/login"  # Use common login endpoint
     resp = requests.post(url, json=payload, verify=False)
     print("Login Response:", resp.status_code, resp.text)
 
@@ -142,7 +142,7 @@ def admin_login(email: str, password: str):
 
 
 def list_all_keys(token, include_expired=False):
-    """列出所有密钥"""
+    """List all keys"""
     url = f"https://127.0.0.1:5001/admin/keys?include_expired={str(include_expired).lower()}"
     headers = {
         "Authorization": f"Bearer {token}"
@@ -160,7 +160,7 @@ def list_all_keys(token, include_expired=False):
 
 
 def backup_keys(token, backup_password, backup_location="key_backups"):
-    """备份所有密钥"""
+    """Backup all keys"""
     url = "https://127.0.0.1:5001/admin/keys/backup"
     headers = {
         "Authorization": f"Bearer {token}"
@@ -176,7 +176,7 @@ def backup_keys(token, backup_password, backup_location="key_backups"):
 
 
 def restore_keys(token, backup_file, backup_password):
-    """从备份恢复密钥"""
+    """Restore keys from backup"""
     url = "https://127.0.0.1:5001/admin/keys/restore"
     headers = {
         "Authorization": f"Bearer {token}"
@@ -192,7 +192,7 @@ def restore_keys(token, backup_file, backup_password):
 
 
 def rotate_key(token, key_id, key_type="symmetric", expiry_days=30):
-    """轮换指定密钥"""
+    """Rotate specified key"""
     url = "https://127.0.0.1:5001/admin/keys/rotate"
     headers = {
         "Authorization": f"Bearer {token}"
@@ -394,4 +394,3 @@ if __name__ == '__main__':
                     break
         else:
             print("login failure!")
-

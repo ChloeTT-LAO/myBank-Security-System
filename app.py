@@ -8,7 +8,7 @@ import os
 app = Flask(__name__)
 
 
-# 注册各个蓝图，设置对应的 URL 前缀
+# Register each blueprint and set the corresponding URL prefix
 app.register_blueprint(client_bp, url_prefix='/client')
 app.register_blueprint(employee_bp, url_prefix='/employee')
 app.register_blueprint(admin_bp, url_prefix='/admin')

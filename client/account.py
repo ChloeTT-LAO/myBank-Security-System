@@ -15,18 +15,18 @@ key_name = "user_account"
 
 def create_account(user_id, account_type):
     """
-    创建新账户
+    create new account
     """
     session = Session()
     try:
         from uuid import uuid4
-        account_number = str(uuid4().int)[:10]  # 生成10位账户号
+        account_number = str(uuid4().int)[:10]  # Generate a 10-digit account number
 
-        # 加密账号
+        # Encrypted account
         aes_key, key_version = retrieve_key_from_db(key_name)
         account_number_nonce, encrypted_account_number = aes_256_gcm_encrypt(account_number.encode('utf-8'), aes_key)
 
-        # 为快速查找，同时存储账号的哈希值
+        # The hash value of the account is also stored for quick lookup
         account_number_hash = hashlib.sha256(account_number.encode('utf-8')).hexdigest()
 
         initial_balance = 0
@@ -45,7 +45,7 @@ def create_account(user_id, account_type):
         session.add(new_account)
         session.commit()
 
-        # 记录操作
+        # record operation
         log_operation(
             user_id,
             "create_account",
@@ -62,7 +62,7 @@ def create_account(user_id, account_type):
 
 def get_account_info(user_id: int, account_id: int):
     """
-    返回账户的基本信息和余额
+    Return basic account information and balance
     """
     session = Session()
     try:
@@ -70,7 +70,7 @@ def get_account_info(user_id: int, account_id: int):
         if not account:
             raise Exception("Account not found or access denied.")
 
-        # 尝试解密账号
+        # Trying to decrypt the account
         account_number = "Encrypted"
         try:
             if account.encrypted_account_number and account.account_number_nonce and account.key_name:
@@ -83,7 +83,7 @@ def get_account_info(user_id: int, account_id: int):
         except Exception as e:
             print(f"Error decrypting account number: {str(e)}")
 
-        # 记录操作
+        # record operation
         log_operation(
             user_id,
             "view_account_info",
@@ -104,16 +104,16 @@ def get_account_info(user_id: int, account_id: int):
 
 def get_transactions(user_id: int, account_id: int):
     """
-    查询与某账户相关的交易，并解密每笔交易的细节
+    Query the transactions associated with an account and decrypt the details of each transaction
     """
     session = Session()
     try:
-        # 首先确认该 account_id 是否属于此 user
+        # First check whether the account id belongs to this user
         account = session.query(Accounts).filter_by(account_id=account_id, user_id=user_id).first()
         if not account:
             raise Exception("Account not found or access denied.")
 
-        # 查找该账户的所有交易(包括转出和转入)
+        # Find all transactions for this account (including transfers and transfers)
         txs = session.query(Transactions).filter(
             (Transactions.source_account_id == account_id) |
             (Transactions.destination_account_id == account_id)
@@ -121,7 +121,7 @@ def get_transactions(user_id: int, account_id: int):
 
         result = []
         for t in txs:
-            # 解密交易细节
+            # Decrypt transaction details
             detail_plain = None
             try:
                 if t.encrypted_note and t.note_nonce and t.key_name:
@@ -146,7 +146,7 @@ def get_transactions(user_id: int, account_id: int):
                 'verification_status': getattr(t, 'verification_status', None)
             })
 
-        # 记录操作
+        # record operation
         log_operation(
             user_id,
             "view_transactions",
@@ -160,7 +160,7 @@ def get_transactions(user_id: int, account_id: int):
 
 def update_personal_info(user_id: int, new_phone: str = None, new_address: str = None, new_name: str = None):
     """
-    更新用户的个人信息。只修改有传入的新值，其他字段保持不变。
+    Update the user's personal information. Only the new values passed in are modified, leaving the other fields unchanged.
     """
     session = Session()
     try:
@@ -168,33 +168,33 @@ def update_personal_info(user_id: int, new_phone: str = None, new_address: str =
         if not user:
             raise Exception("User not found.")
 
-        # 获取加密密钥
+        # Get the encryption key
         aes_key, key_version = retrieve_key_from_db(key_name=user.key_name)
 
-        # 更新电话
+        # Update telephone
         if new_phone is not None:
             phone_nonce, encrypted_phone = aes_256_gcm_encrypt(new_phone.encode('utf-8'), aes_key)
             user.encrypted_phone = encrypted_phone
             user.phone_nonce = phone_nonce
 
-        # 更新地址
+        # refresh address
         if new_address is not None:
             address_nonce, encrypted_address = aes_256_gcm_encrypt(new_address.encode('utf-8'), aes_key)
             user.encrypted_address = encrypted_address
             user.address_nonce = address_nonce
 
-        # 更新姓名
+        # update name
         if new_name is not None:
             name_nonce, encrypted_name = aes_256_gcm_encrypt(new_name.encode('utf-8'), aes_key)
             user.encrypted_name = encrypted_name
             user.name_nonce = name_nonce
 
-        # 记录更新时间
+        # Record update time
         user.updated_at = datetime.datetime.now(tz=datetime.timezone.utc)
 
         session.commit()
 
-        # 记录操作
+        # record operation
         update_fields = []
         if new_phone: update_fields.append("phone")
         if new_address: update_fields.append("address")

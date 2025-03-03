@@ -56,7 +56,7 @@ def store_key(encrypted_key: bytes, key_name, key_type='symmetric', key_version=
 
 def retrieve_key_from_db(key_name: str, key_version: str = None):
     """
-    从KeyStorage表里拿到加密后的对称密钥，然后用RSA私钥解密
+    Get the encrypted symmetric key from the KeyStorage table and decrypt it with the RSA private key
     """
     from .encryption import rsa_decrypt_symmetric_key, load_private_key_from_pem
     session = Session()
@@ -284,7 +284,7 @@ def restore_keys_from_backup(admin_user_id, backup_file, backup_password):
 
 def list_all_keys(admin_user_id, include_expired=False):
     """
-    列出所有密钥（仅供管理员使用）
+    List all keys (for administrators only)
     """
     session = Session()
     try:
@@ -309,7 +309,6 @@ def list_all_keys(admin_user_id, include_expired=False):
                 "status": "active" if key.expiry_date > datetime.datetime.now(tz=datetime.timezone.utc) else "expired"
             })
 
-        # 记录访问操作
         log_operation(
             admin_user_id,
             "key_list_access",

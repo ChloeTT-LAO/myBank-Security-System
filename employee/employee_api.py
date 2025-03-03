@@ -22,8 +22,8 @@ Session = sessionmaker(bind=engine)
 
 def employee_required(f):
     """
-    装饰器: 验证请求中的Authorization令牌是否有效，并确保当前用户角色为'bank_employee'
-    如果验证成功，将当前用户对象作为第一个参数传递给装饰的路由函数
+    Decorator: verifies that the Authorization token in the request is valid and ensures that the current user role is 'bank_employee'
+    If the validation is successful, the current user object is passed as the first argument to the decorated routing function
     """
 
     @wraps(f)
@@ -36,18 +36,16 @@ def employee_required(f):
 
         token = auth_header.replace("Bearer ", "").strip()
 
-        # 获取客户端IP地址和用户代理
         ip_address = request.remote_addr
         user_agent = request.headers.get("User-Agent")
 
-        session_obj = get_session(token, ip_address)
-        if not session_obj:
+        user_id = get_session(token, ip_address)
+        if not user_id:
             return jsonify({'error': 'Invalid or expired session'}), 401
 
-        user_id = session_obj.user_id
         user = session.query(Users).filter_by(user_id=user_id).first()
         if user.role.value != 'bank_employee':
-            # 记录可能的权限越界尝试
+            # Records possible permission transgression attempts
             log_operation(user_id, "unauthorized_access_attempt",
                           f"User with role {user.role.value} attempted to access employee endpoint",
                           ip_address, user_agent)
@@ -58,9 +56,9 @@ def employee_required(f):
     return wrapper
 
 
-# 员工登录 (使用通用的登录端点)
+# Employee login (using the common login endpoint)
 
-# 员工向客户发送加密消息
+# Employee sends encrypted message to client
 @employee_bp.route('/message/send', methods=['POST'])
 @employee_required
 def employee_send_message(current_employee):
@@ -73,12 +71,12 @@ def employee_send_message(current_employee):
     receiver_id = int(parts[2].split("=")[1])
     message_text = parts[3].split("=")[1]
 
-    # 验证数字签名
+    # Verify digital signature
     is_valid = verify_signature(message_str, signature_hex)
     if not is_valid:
         return jsonify({"error": "Digital signature invalid!"}), 400
 
-    # 验证消息完整性
+    # Verify message integrity
     is_integrity = verify_hmac_sha256(message_str, current_employee, hmac_value)
     if not is_integrity:
         return jsonify({"error": "Message integrity check failed!"}), 400
@@ -87,7 +85,7 @@ def employee_send_message(current_employee):
         return jsonify({'error': 'Missing required fields'}), 400
 
     try:
-        # 检查接收者是否存在且是客户
+        # Check if receiver exists and is a client
         session = Session()
         receiver = session.query(Users).filter_by(user_id=receiver_id).first()
 
@@ -99,7 +97,7 @@ def employee_send_message(current_employee):
 
         message_obj = send_message(current_employee.user_id, receiver_id, message_text)
 
-        # 记录操作
+        # Record operation
         log_operation(current_employee.user_id, "message_sent",
                       f"Employee sent encrypted message to client {receiver_id}")
 
@@ -111,14 +109,14 @@ def employee_send_message(current_employee):
         return jsonify({'error': str(e)}), 400
 
 
-# 员工查看消息
+# Employee views messages
 @employee_bp.route('/message/read', methods=['GET'])
 @employee_required
 def employee_get_messages(current_employee):
     try:
         messages = read_message(current_employee.user_id)
 
-        # 记录操作
+        # Record operation
         log_operation(current_employee.user_id, "message_read",
                       "Employee retrieved encrypted messages")
 
@@ -127,17 +125,17 @@ def employee_get_messages(current_employee):
         return jsonify({'error': str(e)}), 400
 
 
-# 查看客户账户
+# View customer accounts
 @employee_bp.route('/customer/<int:customer_id>/accounts', methods=['GET'])
 @employee_required
 def api_view_customer_accounts(current_employee, customer_id):
     """
-    查看指定客户的所有账户
+    View all accounts of a specified customer
     """
     try:
         result = view_customer_accounts(current_employee, customer_id)
 
-        # 记录操作
+        # Record operation
         log_operation(current_employee.user_id, "customer_accounts_access",
                       f"Employee viewed accounts for customer {customer_id}")
 
@@ -146,17 +144,17 @@ def api_view_customer_accounts(current_employee, customer_id):
         return jsonify({'error': str(e)}), 400
 
 
-# 查看客户交易记录
+# View customer transaction records
 @employee_bp.route('/account/<int:account_id>/transactions', methods=['GET'])
 @employee_required
 def api_view_account_transactions(current_employee, account_id):
     """
-    查看指定账户的交易记录
+    View transaction records for a specified account
     """
     try:
         result = view_customer_transactions(current_employee, account_id)
 
-        # 记录操作
+        # Record operation
         log_operation(current_employee.user_id, "account_transactions_access",
                       f"Employee viewed transactions for account {account_id}")
 
@@ -165,7 +163,7 @@ def api_view_account_transactions(current_employee, account_id):
         return jsonify({'error': str(e)}), 400
 
 
-# 员工代客户存款
+# Employee makes deposit for customer
 @employee_bp.route('/deposit', methods=['POST'])
 @employee_required
 def api_deposit_to_customer(current_employee):
@@ -180,7 +178,7 @@ def api_deposit_to_customer(current_employee):
     try:
         tx = deposit_to_customer(current_employee, account_id, float(amount), note)
 
-        # 记录操作
+        # Record operation
         log_operation(current_employee.user_id, "employee_deposit",
                       f"Employee deposited {amount} to account {account_id}")
 
@@ -192,7 +190,7 @@ def api_deposit_to_customer(current_employee):
         return jsonify({'error': str(e)}), 400
 
 
-# 员工代客户取款
+# Employee makes withdrawal for customer
 @employee_bp.route('/withdraw', methods=['POST'])
 @employee_required
 def api_withdraw_from_customer(current_employee):
@@ -207,7 +205,7 @@ def api_withdraw_from_customer(current_employee):
     try:
         tx = withdraw_from_customer(current_employee, account_id, float(amount), note)
 
-        # 记录操作
+        # Record operation
         log_operation(current_employee.user_id, "employee_withdrawal",
                       f"Employee withdrew {amount} from account {account_id}")
 
@@ -219,7 +217,7 @@ def api_withdraw_from_customer(current_employee):
         return jsonify({'error': str(e)}), 400
 
 
-# 员工代客户转账
+# Employee makes transfer for customer
 @employee_bp.route('/transfer', methods=['POST'])
 @employee_required
 def api_employee_transfer(current_employee):
@@ -235,7 +233,7 @@ def api_employee_transfer(current_employee):
     try:
         tx = employee_transfer(current_employee, source_account_id, destination_account_id, float(amount), note)
 
-        # 记录操作
+        # Record operation
         log_operation(current_employee.user_id, "employee_transfer",
                       f"Employee transferred {amount} from account {source_account_id} to account {destination_account_id}")
 
@@ -247,7 +245,7 @@ def api_employee_transfer(current_employee):
         return jsonify({'error': str(e)}), 400
 
 
-# 更新客户信息
+# Update customer information
 @employee_bp.route('/customer/<int:customer_id>/update', methods=['POST'])
 @employee_required
 def api_update_customer_info(current_employee, customer_id):
@@ -263,7 +261,7 @@ def api_update_customer_info(current_employee, customer_id):
             new_address=address
         )
 
-        # 记录操作
+        # Record operation
         log_operation(current_employee.user_id, "customer_info_update",
                       f"Employee updated information for customer {customer_id}")
 
@@ -275,7 +273,7 @@ def api_update_customer_info(current_employee, customer_id):
         return jsonify({'error': str(e)}), 400
 
 
-# 标记可疑交易
+# Mark suspicious transaction
 @employee_bp.route('/transaction/<int:transaction_id>/mark_suspicious', methods=['POST'])
 @employee_required
 def api_mark_suspicious_transaction(current_employee, transaction_id):
@@ -285,11 +283,11 @@ def api_mark_suspicious_transaction(current_employee, transaction_id):
     try:
         tx = mark_suspicious_transaction(current_employee, transaction_id, reason)
 
-        # 记录操作
+        # Record operation
         log_operation(current_employee.user_id, "mark_suspicious_transaction",
                       f"Employee marked transaction {transaction_id} as suspicious: {reason}")
 
-        # 记录安全事件
+        # Record security event
         log_security_event(
             current_employee.user_id,
             "suspicious_transaction_marked",
@@ -304,7 +302,7 @@ def api_mark_suspicious_transaction(current_employee, transaction_id):
         return jsonify({'error': str(e)}), 400
 
 
-# 冻结客户账户
+# Freeze customer account
 @employee_bp.route('/account/<int:account_id>/freeze', methods=['POST'])
 @employee_required
 def api_freeze_customer_account(current_employee, account_id):
@@ -314,11 +312,11 @@ def api_freeze_customer_account(current_employee, account_id):
     try:
         account = freeze_customer_account(current_employee, account_id, reason)
 
-        # 记录操作
+        # Record operation
         log_operation(current_employee.user_id, "freeze_account",
                       f"Employee froze account {account_id}: {reason}")
 
-        # 记录安全事件
+        # Record security event
         log_security_event(
             current_employee.user_id,
             "account_frozen",
@@ -333,7 +331,7 @@ def api_freeze_customer_account(current_employee, account_id):
         return jsonify({'error': str(e)}), 400
 
 
-# 查找客户
+# Find customer
 @employee_bp.route('/customer/search', methods=['GET'])
 @employee_required
 def api_search_customer(current_employee):
@@ -349,7 +347,7 @@ def api_search_customer(current_employee):
         if not customer:
             return jsonify({'error': 'Customer not found'}), 404
 
-        # 记录操作
+        # Record operation
         log_operation(current_employee.user_id, "customer_search",
                       f"Employee searched for customer with email {email}")
 

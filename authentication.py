@@ -16,11 +16,11 @@ from security.key_management import retrieve_key_from_db
 engine = create_engine(DATABASE_URI)
 Session = sessionmaker(bind=engine)
 
-# 定义常量
-MAX_FAILED_ATTEMPTS = 5  # 最大失败尝试次数
-LOCKOUT_DURATION = 15 * 60  # 锁定时间（秒）
-SESSION_TIMEOUT = 30 * 60  # 会话超时时间（秒）
-IP_TRACKING_ENABLED = True  # 是否启用IP追踪
+# Define constants
+MAX_FAILED_ATTEMPTS = 5  # Maximum number of failed attempts
+LOCKOUT_DURATION = 15 * 60  # Lockout duration (seconds)
+SESSION_TIMEOUT = 30 * 60  # Session timeout (seconds)
+IP_TRACKING_ENABLED = True  # Whether to enable IP tracking
 key_name = "user_info"
 
 
@@ -72,7 +72,7 @@ def login(email: str, password: str, ip_address: str = None, user_agent: str = N
     try:
         user = session.query(Users).filter_by(email=email).first()
         if not user:
-            # 登录失败但不泄露用户是否存在
+            # Login failed but don't disclose whether the user exists
             return None, "Invalid email or password"
 
         current_time = datetime.datetime.now(tz=datetime.timezone.utc)
@@ -81,7 +81,7 @@ def login(email: str, password: str, ip_address: str = None, user_agent: str = N
             minutes = int(lock_time_remaining / 60)
             seconds = int(lock_time_remaining % 60)
 
-            # 记录锁定状态下的登录尝试
+            # Record login attempt during lockout
             log_security_event(
                 user.user_id,
                 "login_attempt_during_lockout",
@@ -93,10 +93,10 @@ def login(email: str, password: str, ip_address: str = None, user_agent: str = N
             return None, f"Account is locked. Please try again in {minutes}m {seconds}s."
 
         if not check_password(password, user.password_hash):
-            # 密码错误，增加失败计数
+            # Incorrect password, increment failure count
             user.failed_login_attempts += 1
 
-            # 记录失败的登录尝试
+            # Record failed login attempt
             log_security_event(
                 user.user_id,
                 "failed_login",
@@ -105,12 +105,12 @@ def login(email: str, password: str, ip_address: str = None, user_agent: str = N
                 user_agent
             )
 
-            # 检查是否达到最大失败尝试次数
+            # Check if maximum failed attempts reached
             if user.failed_login_attempts >= MAX_FAILED_ATTEMPTS:
                 user.account_locked_until = current_time + datetime.timedelta(seconds=LOCKOUT_DURATION)
                 session.commit()
 
-                # 记录账户锁定事件
+                # Record account lockout event
                 log_security_event(
                     user.user_id,
                     "account_locked",
@@ -124,7 +124,7 @@ def login(email: str, password: str, ip_address: str = None, user_agent: str = N
             session.commit()
             return None, "Invalid email or password"
 
-        # 检查是否需要更改密码
+        # Check if password change is required
         if user.require_password_change:
             return None, "Password change required. Please reset your password."
 
@@ -139,7 +139,7 @@ def login(email: str, password: str, ip_address: str = None, user_agent: str = N
             return jsonify({"error": "TOTP code expired"}), 401
 
         if not totp.verify(totp_client, valid_window=1):
-            # MFA验证失败
+            # MFA verification failed
             log_security_event(
                 user.user_id,
                 "failed_mfa",
@@ -149,14 +149,14 @@ def login(email: str, password: str, ip_address: str = None, user_agent: str = N
             )
             return jsonify({"error": "Invalid MFA code"}), 401
 
-        # 重置失败登录计数
+        # Reset failed login counter
         user.failed_login_attempts = 0
         session.commit()
 
-        # 1) 生成随机 session token（使用 uuid）
+        # 1) Generate random session token (using uuid)
         token = str(uuid.uuid4())
 
-        # 2) 在 UserSessions 表中创建新的会话记录
+        # 2) Create new session record in UserSessions table
         new_session = UserSessions(
             user_id=user.user_id,
             session_token=token,
@@ -164,7 +164,7 @@ def login(email: str, password: str, ip_address: str = None, user_agent: str = N
         )
         session.add(new_session)
         session.commit()
-        # 记录成功登录
+        # Record successful login
         log_security_event(
             user.user_id,
             "successful_login",
@@ -175,7 +175,7 @@ def login(email: str, password: str, ip_address: str = None, user_agent: str = N
         if user and token:
             update_login_behavior(user.user_id, ip_address, user_agent)
 
-            # 根据风险级别决定是否需要额外验证
+            # Determine if additional verification is needed based on risk level
             risk_level = get_risk_level(user.user_id)
             if risk_level == "high":
                 log_security_event(
@@ -186,7 +186,7 @@ def login(email: str, password: str, ip_address: str = None, user_agent: str = N
                     user_agent
                 )
 
-        # 3) 返回用户对象和 token，供后续调用使用
+        # 3) Return user object and token for subsequent calls
         return user, token
 
     finally:
@@ -199,7 +199,7 @@ def logout(session_token: str):
     user_session = session.query(UserSessions).filter_by(session_token=session_token).first()
     if user_session and not user_session.logout_time:
         user_session.logout_time = datetime.datetime.now(tz=datetime.timezone.utc)
-        # 记录登出操作
+        # Record logout operation
         log_operation(
             user_session.user_id,
             "user_logout",
@@ -232,7 +232,7 @@ def get_session(token: str, ip_address: str = None, user_agent: str = None):
         time_since_activity = (current_time - user_session.last_activity).total_seconds()
 
         if time_since_activity > SESSION_TIMEOUT:
-            # 会话超时，自动登出
+            # Session timeout, automatically log out
             user_session.logout_time = current_time
             log_security_event(
                 user_session.user_id,
@@ -245,14 +245,14 @@ def get_session(token: str, ip_address: str = None, user_agent: str = None):
         user_session.last_activity = current_time
 
         if user_session:
-            # 更新行为分析数据
+            # Update behavioral analysis data
             if ip_address and user_agent:
                 update_login_behavior(user_session.user_id, ip_address, user_agent)
 
-            # 检查当前风险级别
+            # Check current risk level
             risk_level = get_risk_level(user_session.user_id)
 
-            # 对于高风险会话，可能需要额外的验证
+            # Additional verification may be needed for high-risk sessions
             if risk_level == "high" and not getattr(user_session, 'risk_verified', False):
                 log_security_event(
                     user_session.user_id,
@@ -272,8 +272,8 @@ def get_session(token: str, ip_address: str = None, user_agent: str = None):
 
 def is_strong_password(password: str) -> bool:
     """
-    检查密码是否足够强壮
-    要求：至少8个字符，包含大小写字母、数字和特殊字符
+    Check if password is strong enough
+    Requirements: at least 8 characters, including uppercase and lowercase letters, numbers, and special characters
     """
     if len(password) < 8:
         return False
@@ -298,7 +298,7 @@ def is_strong_password(password: str) -> bool:
 
 def require_password_change(user_id: int, admin_id: int):
     """
-    管理员强制用户在下次登录时更改密码
+    Administrator forces user to change password on next login
     """
     session = Session()
     try:
@@ -309,7 +309,7 @@ def require_password_change(user_id: int, admin_id: int):
         user.require_password_change = True
         session.commit()
 
-        # 记录操作
+        # Record operation
         log_operation(
             admin_id,
             "require_password_change",

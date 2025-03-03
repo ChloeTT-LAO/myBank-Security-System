@@ -15,7 +15,7 @@ key_name = "user_transaction"
 
 def deposit_to_customer(employee_user, account_id, amount, note="Employee Deposit"):
     """
-    员工代表客户进行存款操作
+    Employee deposits funds on behalf of a customer.
     """
     session = Session()
     try:
@@ -23,18 +23,18 @@ def deposit_to_customer(employee_user, account_id, amount, note="Employee Deposi
         if not account:
             raise Exception("Account not found.")
 
-        # 检查账户是否被冻结
+        # Check if the account is frozen
         if getattr(account, 'is_frozen', False):
             raise Exception("Account is frozen and cannot accept deposits.")
 
-        # 执行存款
+        # Perform deposit
         account.balance += amount
 
-        # 加密交易备注
+        # Encrypt transaction note
         aes_key, key_version = retrieve_key_from_db(key_name=key_name)
         note_nonce, encrypted_note = aes_256_gcm_encrypt(note.encode('utf-8'), aes_key)
 
-        # 创建交易数据，用于完整性校验
+        # Create transaction data for integrity validation
         current_time = datetime.datetime.now(tz=datetime.timezone.utc)
         transaction_data = {
             "source_account_id": None,
@@ -45,12 +45,12 @@ def deposit_to_customer(employee_user, account_id, amount, note="Employee Deposi
             "details": encrypted_note
         }
 
-        # 计算完整性校验和
+        # Compute integrity checksum
         integrity_checksum = generate_transaction_hash(transaction_data)
 
-        # 记录交易
+        # Log transaction
         transaction = Transactions(
-            source_account_id=None,  # 存款可能没有source
+            source_account_id=None,  # Deposit may not have a source
             destination_account_id=account_id,
             amount=amount,
             transaction_type='deposit',
@@ -66,7 +66,7 @@ def deposit_to_customer(employee_user, account_id, amount, note="Employee Deposi
         session.add(transaction)
         session.commit()
 
-        # 记录操作
+        # Log operation
         log_operation(
             employee_user.user_id,
             "employee_deposit",
@@ -83,7 +83,7 @@ def deposit_to_customer(employee_user, account_id, amount, note="Employee Deposi
 
 def withdraw_from_customer(employee_user, account_id, amount, note="Employee Withdrawal"):
     """
-    员工代表客户进行取款操作
+    Employee withdraws funds on behalf of a customer.
     """
     session = Session()
     try:
@@ -91,21 +91,21 @@ def withdraw_from_customer(employee_user, account_id, amount, note="Employee Wit
         if not account:
             raise Exception("Account not found.")
 
-        # 检查账户是否被冻结
+        # Check if the account is frozen
         if getattr(account, 'is_frozen', False):
             raise Exception("Account is frozen and cannot process withdrawals.")
 
         if account.balance < amount:
             raise Exception("Insufficient funds.")
 
-        # 执行取款
+        # Perform withdrawal
         account.balance -= amount
 
-        # 加密交易备注
+        # Encrypt transaction note
         aes_key, key_version = retrieve_key_from_db(key_name=key_name)
         note_nonce, encrypted_note = aes_256_gcm_encrypt(note.encode('utf-8'), aes_key)
 
-        # 创建交易数据，用于完整性校验
+        # Create transaction data for integrity validation
         current_time = datetime.datetime.now(tz=datetime.timezone.utc)
         transaction_data = {
             "source_account_id": account_id,
@@ -116,10 +116,10 @@ def withdraw_from_customer(employee_user, account_id, amount, note="Employee Wit
             "details": encrypted_note
         }
 
-        # 计算完整性校验和
+        # Compute integrity checksum
         integrity_checksum = generate_transaction_hash(transaction_data)
 
-        # 记录交易
+        # Log transaction
         transaction = Transactions(
             source_account_id=account_id,
             destination_account_id=None,
@@ -137,7 +137,7 @@ def withdraw_from_customer(employee_user, account_id, amount, note="Employee Wit
         session.add(transaction)
         session.commit()
 
-        # 记录操作
+        # Log operation
         log_operation(
             employee_user.user_id,
             "employee_withdrawal",
@@ -154,7 +154,7 @@ def withdraw_from_customer(employee_user, account_id, amount, note="Employee Wit
 
 def employee_transfer(employee_user, source_account_id, destination_account_id, amount, note="Employee Transfer"):
     """
-    员工代客户进行转账操作
+    Employee performs a transfer on behalf of a customer.
     """
     session = Session()
     try:
@@ -164,7 +164,7 @@ def employee_transfer(employee_user, source_account_id, destination_account_id, 
         if not source_account or not destination_account:
             raise Exception("Source or destination account not found.")
 
-        # 检查账户是否被冻结
+        # Check if the accounts are frozen
         if getattr(source_account, 'is_frozen', False):
             raise Exception("Source account is frozen and cannot process transfers.")
 
@@ -174,15 +174,15 @@ def employee_transfer(employee_user, source_account_id, destination_account_id, 
         if source_account.balance < amount:
             raise Exception("Insufficient funds in source account.")
 
-        # 执行转账
+        # Perform transfer
         source_account.balance -= amount
         destination_account.balance += amount
 
-        # 加密交易备注
+        # Encrypt transaction note
         aes_key, key_version = retrieve_key_from_db(key_name=key_name)
         note_nonce, encrypted_note = aes_256_gcm_encrypt(note.encode('utf-8'), aes_key)
 
-        # 创建交易数据，用于完整性校验
+        # Create transaction data for integrity validation
         current_time = datetime.datetime.now(tz=datetime.timezone.utc)
         transaction_data = {
             "source_account_id": source_account_id,
@@ -193,10 +193,10 @@ def employee_transfer(employee_user, source_account_id, destination_account_id, 
             "details": encrypted_note
         }
 
-        # 计算完整性校验和
+        # Compute integrity checksum
         integrity_checksum = generate_transaction_hash(transaction_data)
 
-        # 记录交易
+        # Log transaction
         transaction = Transactions(
             source_account_id=source_account_id,
             destination_account_id=destination_account_id,
@@ -214,7 +214,7 @@ def employee_transfer(employee_user, source_account_id, destination_account_id, 
         session.add(transaction)
         session.commit()
 
-        # 记录操作
+        # Log operation
         log_operation(
             employee_user.user_id,
             "employee_transfer",

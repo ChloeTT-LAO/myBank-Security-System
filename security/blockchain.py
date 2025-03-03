@@ -1,10 +1,9 @@
 import hashlib
 import json
-import time
 import datetime
-from typing import Dict, List, Any, Optional
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
-from sqlalchemy.orm import sessionmaker, declarative_base
+from typing import Dict, List, Any
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 from config.config import DATABASE_URI
 from config.mybank_db import Transactions, BlockchainBlock, BlockchainTransaction
 from security.audit import log_operation
@@ -13,39 +12,38 @@ engine = create_engine(DATABASE_URI)
 Session = sessionmaker(bind=engine)
 
 
-# 区块链存储的区块
-
+# Blockchain storage block
 
 
 class SimpleBlockchain:
-    """简化的区块链实现"""
+    """Simplified blockchain implementation"""
 
     def __init__(self):
-        """初始化区块链"""
-        self.difficulty = 2  # 挖矿难度
+        """Initialize the blockchain"""
+        self.difficulty = 2  # Mining difficulty
 
-        # 检查是否需要创建创世区块
+        # Check if genesis block needs to be created
         session = Session()
         try:
-            # 检查是否有区块
+            # Check if there are any blocks
             block_count = session.query(BlockchainBlock).count()
             if block_count == 0:
-                # 创建创世区块
+                # Create genesis block
                 self._create_genesis_block()
         finally:
             session.close()
 
     def _create_genesis_block(self):
-        """创建创世区块"""
+        """Create genesis block"""
         session = Session()
         try:
-            # 创建创世区块数据
+            # Create genesis block data
             genesis_data = {
                 "message": "Genesis Block",
                 "timestamp": datetime.datetime.now(tz=datetime.timezone.utc).isoformat()
             }
 
-            # 计算创世区块哈希
+            # Calculate genesis block hash
             genesis_hash = self._calculate_hash(
                 previous_hash="0" * 64,
                 merkle_root=self._calculate_merkle_root([genesis_data]),
@@ -53,7 +51,7 @@ class SimpleBlockchain:
                 nonce=0
             )
 
-            # 创建创世区块
+            # Create genesis block
             genesis_block = BlockchainBlock(
                 previous_hash="0" * 64,
                 merkle_root=self._calculate_merkle_root([genesis_data]),
@@ -67,7 +65,7 @@ class SimpleBlockchain:
             session.add(genesis_block)
             session.commit()
 
-            # 创建创世交易
+            # Create genesis transaction
             genesis_tx = BlockchainTransaction(
                 block_id=genesis_block.block_id,
                 transaction_id=0,
@@ -79,34 +77,34 @@ class SimpleBlockchain:
             session.add(genesis_tx)
             session.commit()
 
-            print(f"创世区块已创建，哈希: {genesis_hash}")
+            print(f"Genesis block created, hash: {genesis_hash}")
         except Exception as e:
             session.rollback()
-            print(f"创建创世区块失败: {str(e)}")
+            print(f"Failed to create genesis block: {str(e)}")
         finally:
             session.close()
 
     def _calculate_hash(self, previous_hash: str, merkle_root: str, timestamp: datetime.datetime, nonce: int) -> str:
-        """计算区块哈希"""
+        """Calculate block hash"""
         block_header = f"{previous_hash}{merkle_root}{timestamp.isoformat()}{nonce}"
         return hashlib.sha256(block_header.encode()).hexdigest()
 
     def _calculate_merkle_root(self, data_list: List[Dict[str, Any]]) -> str:
-        """计算梅克尔根"""
+        """Calculate Merkle root"""
         if not data_list:
             return "0" * 64
 
-        # 计算每个数据项的哈希
+        # Calculate hash for each data item
         hashes = [hashlib.sha256(json.dumps(data).encode()).hexdigest() for data in data_list]
 
-        # 如果只有一个哈希，直接返回
+        # If there's only one hash, return directly
         if len(hashes) == 1:
             return hashes[0]
 
-        # 不断合并哈希，直到只剩一个
+        # Continuously merge hashes until only one remains
         while len(hashes) > 1:
             if len(hashes) % 2 != 0:
-                hashes.append(hashes[-1])  # 如果是奇数，复制最后一个
+                hashes.append(hashes[-1])  # If odd number, duplicate the last one
 
             temp = []
             for i in range(0, len(hashes), 2):
@@ -118,7 +116,7 @@ class SimpleBlockchain:
         return hashes[0]
 
     def _mine_block(self, previous_hash: str, merkle_root: str, timestamp: datetime.datetime) -> tuple[str, int]:
-        """挖矿，找到符合难度的区块哈希"""
+        """Mining, find block hash that meets difficulty"""
         nonce = 0
         block_hash = self._calculate_hash(previous_hash, merkle_root, timestamp, nonce)
 
@@ -158,13 +156,13 @@ class SimpleBlockchain:
                 # Does not contain encrypted sensitive data
             }
 
-            # 计算交易哈希
+            # Calculate transaction hash
             tx_hash = hashlib.sha256(json.dumps(tx_data).encode()).hexdigest()
 
-            # 获取待处理的交易
+            # Get pending transactions
             pending_txs = session.query(BlockchainTransaction).filter_by(block_id=None).all()
 
-            # 将当前交易加入待处理列表
+            # Add current transaction to pending list
             current_tx = BlockchainTransaction(
                 transaction_id=transaction_id,
                 transaction_hash=tx_hash,
@@ -174,13 +172,13 @@ class SimpleBlockchain:
             session.add(current_tx)
             session.commit()
 
-            # 刷新以获取ID
+            # Refresh to get ID
             session.refresh(current_tx)
 
-            # 更新待处理列表
+            # Update pending list
             pending_txs.append(current_tx)
 
-            # 如果待处理交易达到10个，创建新区块
+            # If pending transactions reach 10, create new block
             if len(pending_txs) >= 10:
                 return self._create_new_block(session, pending_txs)
 
@@ -196,25 +194,25 @@ class SimpleBlockchain:
             session.close()
 
     def _create_new_block(self, session, pending_txs: List[BlockchainTransaction]) -> Dict[str, Any]:
-        """创建新区块"""
+        """Create new block"""
         try:
-            # 获取最后一个区块
+            # Get the last block
             last_block = session.query(BlockchainBlock).order_by(BlockchainBlock.block_id.desc()).first()
 
-            # 准备区块数据
+            # Prepare block data
             previous_hash = last_block.block_hash
             timestamp = datetime.datetime.now(tz=datetime.timezone.utc)
 
-            # 准备交易数据列表
+            # Prepare transaction data list
             tx_data_list = [json.loads(tx.transaction_data) for tx in pending_txs]
 
-            # 计算梅克尔根
+            # Calculate Merkle root
             merkle_root = self._calculate_merkle_root(tx_data_list)
 
-            # 挖矿，找到符合难度的哈希
+            # Mining, find hash that meets difficulty
             block_hash, nonce = self._mine_block(previous_hash, merkle_root, timestamp)
 
-            # 创建新区块
+            # Create new block
             new_block = BlockchainBlock(
                 previous_hash=previous_hash,
                 merkle_root=merkle_root,
@@ -228,10 +226,10 @@ class SimpleBlockchain:
             session.add(new_block)
             session.commit()
 
-            # 刷新以获取ID
+            # Refresh to get ID
             session.refresh(new_block)
 
-            # 更新待处理交易的区块ID
+            # Update block IDs for pending transactions
             for tx in pending_txs:
                 tx.block_id = new_block.block_id
 
@@ -249,10 +247,10 @@ class SimpleBlockchain:
             raise e
 
     def verify_transaction(self, transaction_id: int) -> Dict[str, Any]:
-        """验证交易是否在区块链中，以及它的完整性"""
+        """Verify if transaction is in the blockchain and its integrity"""
         session = Session()
         try:
-            # 查找交易
+            # Find transaction
             blockchain_tx = session.query(BlockchainTransaction).filter_by(transaction_id=transaction_id).first()
 
             if not blockchain_tx:
@@ -261,14 +259,14 @@ class SimpleBlockchain:
                     "message": f"Transaction {transaction_id} not found in blockchain"
                 }
 
-            # 如果交易还未被包含在区块中
+            # If transaction is not yet included in a block
             if not blockchain_tx.block_id:
                 return {
                     "verified": False,
                     "message": f"Transaction {transaction_id} is pending, not yet in a block"
                 }
 
-            # 获取区块
+            # Get the block
             block = session.query(BlockchainBlock).filter_by(block_id=blockchain_tx.block_id).first()
 
             if not block:
@@ -277,7 +275,7 @@ class SimpleBlockchain:
                     "message": f"Block {blockchain_tx.block_id} not found"
                 }
 
-            # 验证交易哈希
+            # Verify transaction hash
             tx_data = json.loads(blockchain_tx.transaction_data)
             calculated_hash = hashlib.sha256(json.dumps(tx_data).encode()).hexdigest()
 
@@ -287,7 +285,7 @@ class SimpleBlockchain:
                     "message": "Transaction data has been tampered with"
                 }
 
-            # 验证区块哈希
+            # Verify block hash
             calculated_block_hash = self._calculate_hash(
                 block.previous_hash,
                 block.merkle_root,
@@ -301,8 +299,8 @@ class SimpleBlockchain:
                     "message": "Block data has been tampered with"
                 }
 
-            # 验证梅克尔根
-            # 获取区块中的所有交易
+            # Verify Merkle root
+            # Get all transactions in the block
             block_txs = session.query(BlockchainTransaction).filter_by(block_id=block.block_id).all()
             tx_data_list = [json.loads(tx.transaction_data) for tx in block_txs]
 
@@ -314,7 +312,7 @@ class SimpleBlockchain:
                     "message": "Block's merkle root is invalid"
                 }
 
-            # 所有验证通过
+            # All verifications passed
             return {
                 "verified": True,
                 "message": f"Transaction {transaction_id} verified in block {block.block_id}",
@@ -326,19 +324,19 @@ class SimpleBlockchain:
             session.close()
 
     def get_blockchain_info(self) -> Dict[str, Any]:
-        """获取区块链信息"""
+        """Get blockchain information"""
         session = Session()
         try:
-            # 获取区块总数
+            # Get total number of blocks
             block_count = session.query(BlockchainBlock).count()
 
-            # 获取交易总数
+            # Get total number of transactions
             tx_count = session.query(BlockchainTransaction).filter(BlockchainTransaction.block_id.isnot(None)).count()
 
-            # 获取最后一个区块
+            # Get the last block
             last_block = session.query(BlockchainBlock).order_by(BlockchainBlock.block_id.desc()).first()
 
-            # 获取待处理的交易数
+            # Get number of pending transactions
             pending_count = session.query(BlockchainTransaction).filter_by(block_id=None).count()
 
             return {
@@ -356,7 +354,7 @@ class SimpleBlockchain:
             session.close()
 
 
-# 创建区块链实例
+# Create blockchain instance
 blockchain = SimpleBlockchain()
 
 
@@ -375,10 +373,10 @@ def record_transaction(transaction_id: int, user_id: int = None) -> Dict[str, An
 
 
 def verify_transaction_integrity(transaction_id: int, user_id: int = None) -> Dict[str, Any]:
-    """验证交易完整性"""
+    """Verify transaction integrity"""
     result = blockchain.verify_transaction(transaction_id)
 
-    # 记录操作
+    # Record operation
     if user_id:
         log_operation(
             user_id,
@@ -390,5 +388,5 @@ def verify_transaction_integrity(transaction_id: int, user_id: int = None) -> Di
 
 
 def get_blockchain_status() -> Dict[str, Any]:
-    """获取区块链状态信息"""
+    """Get blockchain status information"""
     return blockchain.get_blockchain_info()

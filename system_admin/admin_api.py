@@ -19,8 +19,8 @@ Session = sessionmaker(bind=engine)
 
 def admin_required(f):
     """
-    Decorator: Verify whether the Authorization token in the request is valid and ensure that the current user’s role
-    is ‘client’. If the verification is successful, pass the current user object to the decorated route function as
+    Decorator: Verify whether the Authorization token in the request is valid and ensure that the current user's role
+    is 'client'. If the verification is successful, pass the current user object to the decorated route function as
     the first parameter.
     """
     @wraps(f)
@@ -56,7 +56,7 @@ def employee_register():
     public_key = data.get('public_key')
     role = data.get('role')
 
-    # 记录客户端IP和用户代理
+    # Record client IP and user agent
     ip_address = request.headers.get("X-Test-IP", request.remote_addr)
     user_agent = request.headers.get("User-Agent")
 
@@ -71,7 +71,7 @@ def employee_register():
 
         user_id, hmac_key = register_user(name, email, password, phone, address, public_key, totp_secret, role)
 
-        # 记录成功注册
+        # Record successful registration
         log_operation(user_id, "user_registration", f"New client registered with email {email}", ip_address, user_agent)
 
         return jsonify({
@@ -89,7 +89,7 @@ def employee_register():
 @admin_required
 def api_list_keys(current_admin):
     """
-    获取所有密钥信息（不包含实际密钥值）
+    Get all key information (not including actual key values)
     GET /admin/keys?include_expired=false
     """
     include_expired = request.args.get('include_expired', 'false').lower() == 'true'
@@ -105,7 +105,7 @@ def api_list_keys(current_admin):
 @admin_required
 def api_backup_keys(current_admin):
     """
-    备份所有有效密钥
+    Backup all valid keys
     POST /admin/keys/backup
     JSON body: {"backup_password": "your_strong_password", "backup_location": "optional_path"}
     """
@@ -127,7 +127,7 @@ def api_backup_keys(current_admin):
 @admin_required
 def api_restore_keys(current_admin):
     """
-    从备份恢复密钥
+    Restore keys from backup
     POST /admin/keys/restore
     JSON body: {"backup_file": "/path/to/backup.enc", "backup_password": "your_strong_password"}
     """
@@ -149,7 +149,7 @@ def api_restore_keys(current_admin):
 @admin_required
 def api_rotate_key(current_admin):
     """
-    轮换指定密钥
+    Rotate specified key
     POST /admin/keys/rotate
     JSON body: {"key_id": 123, "key_type": "symmetric", "expiry_days": 30}
     """
@@ -175,7 +175,7 @@ def api_rotate_key(current_admin):
 @admin_required
 def api_generate_new_rsa(current_admin):
     """
-    生成新的RSA密钥对
+    Generate new RSA key pair
     POST /admin/keys/new_rsa
     """
     try:
@@ -192,7 +192,7 @@ def api_generate_new_rsa(current_admin):
 # @admin_required
 def api_generate_new_aes():
     """
-    生成新的AES密钥
+    Generate new AES key
     POST /admin/keys/new_aes
     JSON body: {"key_name": "user_info", "key_type": "symmetric", "key_version": "v2", "expiry_days": 30}
     """
@@ -239,7 +239,7 @@ def get_security_logs_api(current_admin):
 @admin_bp.route('/blockchain/status', methods=['GET'])
 @admin_required
 def api_blockchain_status(current_admin):
-    """获取区块链状态"""
+    """Get blockchain status"""
     try:
         status = get_blockchain_status()
 
@@ -254,7 +254,7 @@ def api_blockchain_status(current_admin):
 @admin_bp.route('/blockchain/verify/<int:transaction_id>', methods=['GET'])
 @admin_required
 def api_verify_blockchain_transaction(current_admin, transaction_id):
-    """验证区块链交易"""
+    """Verify blockchain transaction"""
     try:
         result = verify_transaction_integrity(transaction_id, current_admin.user_id)
 

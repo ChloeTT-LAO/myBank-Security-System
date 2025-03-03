@@ -1,6 +1,6 @@
 import hashlib
 from decimal import Decimal
-from typing import Union, Tuple, Dict, Any, Optional
+from typing import Union, Tuple
 from config.mybank_db import Accounts, Transactions
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
@@ -191,33 +191,26 @@ def transfer(source_account_number: str, destination_account_number: str, amount
 
 def deposit(account_number: str, amount: Union[str, float, Decimal], note: str = "Deposit",
             user_id: int = None, hmac_key: bytes = None) -> Tuple[int, Decimal]:
-    """
-    存款函数
-    """
+
     session = Session()
     try:
-        # 将amount转换为Decimal
         if isinstance(amount, str):
             amount = Decimal(amount)
         elif isinstance(amount, float):
             amount = Decimal(str(amount))
 
-        # 查找账户
         account = session.query(Accounts).filter_by(
             account_number_hash=hashlib.sha256(account_number.encode('utf-8')).hexdigest()).first()
 
         if not account:
             raise Exception("Account not found.")
 
-        # 执行存款
         account.balance += amount
         balance = account.balance
 
-        # 加密交易备注
         aes_key, key_version = retrieve_key_from_db(key_name=key_name)
         note_nonce, encrypted_note = aes_256_gcm_encrypt(note.encode('utf-8'), aes_key)
 
-        # 创建交易数据，用于完整性校验
         current_time = datetime.datetime.now(tz=datetime.timezone.utc)
         transaction_data = {
             "source_account_id": None,
@@ -228,17 +221,14 @@ def deposit(account_number: str, amount: Union[str, float, Decimal], note: str =
             "details": encrypted_note
         }
 
-        # 计算完整性校验和
         integrity_checksum = generate_transaction_hash(transaction_data)
 
-        # 生成交易签名（如果提供了HMAC密钥）
         transaction_signature = None
         if hmac_key:
             transaction_signature = generate_transaction_signature(transaction_data, hmac_key)
 
-        # 创建交易记录
         transaction = Transactions(
-            source_account_id=None,  # 存款没有源账户
+            source_account_id=None,
             destination_account_id=account.account_id,
             amount=amount,
             transaction_type='deposit',
@@ -255,7 +245,6 @@ def deposit(account_number: str, amount: Union[str, float, Decimal], note: str =
         session.add(transaction)
         session.commit()
 
-        # 记录操作
         if user_id:
             log_operation(
                 user_id,
@@ -274,18 +263,14 @@ def deposit(account_number: str, amount: Union[str, float, Decimal], note: str =
 
 def withdraw(account_number: str, amount: Union[str, float, Decimal], note: str = "Withdrawal",
              user_id: int = None, hmac_key: bytes = None) -> Tuple[int, Decimal]:
-    """
-    取款函数
-    """
+
     session = Session()
     try:
-        # 将amount转换为Decimal
         if isinstance(amount, str):
             amount = Decimal(amount)
         elif isinstance(amount, float):
             amount = Decimal(str(amount))
 
-        # 查找账户
         account = session.query(Accounts).filter_by(
             account_number_hash=hashlib.sha256(account_number.encode('utf-8')).hexdigest()).first()
 
@@ -295,15 +280,12 @@ def withdraw(account_number: str, amount: Union[str, float, Decimal], note: str 
         if account.balance < amount:
             raise Exception("Insufficient funds.")
 
-        # 执行取款
         account.balance -= amount
         balance = account.balance
 
-        # 加密交易备注
         aes_key, key_version = retrieve_key_from_db(key_name=key_name)
         note_nonce, encrypted_note = aes_256_gcm_encrypt(note.encode('utf-8'), aes_key)
 
-        # 创建交易数据，用于完整性校验
         current_time = datetime.datetime.now(tz=datetime.timezone.utc)
         transaction_data = {
             "source_account_id": account.account_id,
@@ -314,18 +296,15 @@ def withdraw(account_number: str, amount: Union[str, float, Decimal], note: str 
             "details": encrypted_note
         }
 
-        # 计算完整性校验和
         integrity_checksum = generate_transaction_hash(transaction_data)
 
-        # 生成交易签名（如果提供了HMAC密钥）
         transaction_signature = None
         if hmac_key:
             transaction_signature = generate_transaction_signature(transaction_data, hmac_key)
 
-        # 创建交易记录
         transaction = Transactions(
             source_account_id=account.account_id,
-            destination_account_id=None,  # 取款没有目标账户
+            destination_account_id=None,
             amount=amount,
             transaction_type='withdraw',
             status='completed',
@@ -341,7 +320,6 @@ def withdraw(account_number: str, amount: Union[str, float, Decimal], note: str 
         session.add(transaction)
         session.commit()
 
-        # 记录操作
         if user_id:
             log_operation(
                 user_id,

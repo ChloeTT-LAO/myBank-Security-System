@@ -2,47 +2,47 @@ import base64
 import json
 import os
 import datetime
-from typing import Dict, Any, Optional, List, Tuple, Union
+from typing import Dict, Any
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from config.config import DATABASE_URI
-from config.mybank_db import Users, SecurityLogs
-from security.audit import log_operation, log_security_event
+from config.mybank_db import Users
+from security.audit import log_operation
 
 engine = create_engine(DATABASE_URI)
 Session = sessionmaker(bind=engine)
 
 
 class WebAuthnManager:
-    """WebAuthn身份验证管理器"""
+    """WebAuthn authentication manager"""
 
     def __init__(self, rp_id: str, rp_name: str):
         """
-        初始化WebAuthn管理器
+        Initialize WebAuthn manager
 
-        参数:
-        - rp_id: 依赖方ID（通常是域名）
-        - rp_name: 依赖方名称
+        Parameters:
+        - rp_id: Relying Party ID (usually the domain name)
+        - rp_name: Relying Party name
         """
         self.rp_id = rp_id
         self.rp_name = rp_name
 
     def generate_registration_options(self, user_id: str, username: str) -> Dict[str, Any]:
         """
-        生成注册选项
+        Generate registration options
 
-        参数:
-        - user_id: 用户ID
-        - username: 用户名
+        Parameters:
+        - user_id: User ID
+        - username: Username
 
-        返回:
-        - 注册选项JSON
+        Returns:
+        - Registration options JSON
         """
-        # 生成随机挑战
+        # Generate random challenge
         challenge = os.urandom(32)
         challenge_b64 = base64.b64encode(challenge).decode('ascii')
 
-        # 模拟注册选项
+        # Simulate registration options
         options = {
             'challenge': challenge_b64,
             'rp': {
@@ -67,16 +67,16 @@ class WebAuthnManager:
             }
         }
 
-        # 存储挑战以供后续验证
+        # Store challenge for subsequent verification
         session = Session()
         try:
             user = session.query(Users).filter_by(user_id=user_id).first()
             if user:
                 if not hasattr(user, 'webauthn_data'):
-                    # 确保数据库有此字段
+                    # Ensure the database has this field
                     pass
                 else:
-                    # 存储挑战
+                    # Store challenge
                     webauthn_data = json.loads(user.webauthn_data) if user.webauthn_data else {}
                     webauthn_data['registration_challenge'] = challenge_b64
                     webauthn_data['registration_challenge_time'] = datetime.datetime.now(
@@ -90,14 +90,14 @@ class WebAuthnManager:
 
     def verify_registration(self, user_id: str, credential: Dict[str, Any]) -> Dict[str, Any]:
         """
-        验证注册响应
+        Verify registration response
 
-        参数:
-        - user_id: 用户ID
-        - credential: 凭证数据
+        Parameters:
+        - user_id: User ID
+        - credential: Credential data
 
-        返回:
-        - 验证结果
+        Returns:
+        - Verification result
         """
         session = Session()
         try:
@@ -105,24 +105,24 @@ class WebAuthnManager:
             if not user:
                 raise ValueError("User not found")
 
-            # 提取已存储的挑战
+            # Extract stored challenge
             webauthn_data = json.loads(user.webauthn_data) if user.webauthn_data else {}
             stored_challenge = webauthn_data.get('registration_challenge')
 
             if not stored_challenge:
                 raise ValueError("No registration challenge found")
 
-            # 验证挑战是否匹配
+            # Verify if challenge matches
             client_challenge = credential.get('response', {}).get('clientDataJSON', {}).get('challenge')
             if client_challenge != stored_challenge:
                 raise ValueError("Challenge mismatch")
 
-            # 提取凭证ID和公钥
+            # Extract credential ID and public key
             credential_id = credential.get('id')
             public_key = credential.get('response', {}).get('attestationObject', {}).get('authData', {}).get(
                 'attestedCredentialData', {}).get('credentialPublicKey')
 
-            # 存储凭证
+            # Store credential
             credentials = webauthn_data.get('credentials', [])
             credentials.append({
                 'id': credential_id,
@@ -132,13 +132,13 @@ class WebAuthnManager:
             })
 
             webauthn_data['credentials'] = credentials
-            webauthn_data.pop('registration_challenge', None)  # 移除挑战
+            webauthn_data.pop('registration_challenge', None)  # Remove challenge
             webauthn_data.pop('registration_challenge_time', None)
 
             user.webauthn_data = json.dumps(webauthn_data)
             session.commit()
 
-            # 记录操作
+            # Record operation
             log_operation(
                 user_id,
                 "webauthn_register",
@@ -154,13 +154,13 @@ class WebAuthnManager:
 
     def generate_authentication_options(self, username: str) -> Dict[str, Any]:
         """
-        生成认证选项
+        Generate authentication options
 
-        参数:
-        - username: 用户名
+        Parameters:
+        - username: Username
 
-        返回:
-        - 认证选项JSON
+        Returns:
+        - Authentication options JSON
         """
         session = Session()
         try:
@@ -168,21 +168,21 @@ class WebAuthnManager:
             if not user:
                 raise ValueError("User not found")
 
-            # 提取已存储的凭证
+            # Extract stored credentials
             webauthn_data = json.loads(user.webauthn_data) if user.webauthn_data else {}
             credentials = webauthn_data.get('credentials', [])
 
             if not credentials:
                 raise ValueError("No credentials found")
 
-            # 生成随机挑战
+            # Generate random challenge
             challenge = os.urandom(32)
             challenge_b64 = base64.b64encode(challenge).decode('ascii')
 
-            # 在实际实现中，这里会调用FIDO2库
+            # In actual implementation, this would call the FIDO2 library
             # options = self.server.authenticate_begin(credentials)
 
-            # 模拟认证选项
+            # Simulate authentication options
             options = {
                 'challenge': challenge_b64,
                 'timeout': 60000,
@@ -196,7 +196,7 @@ class WebAuthnManager:
                 'userVerification': 'preferred'
             }
 
-            # 存储挑战以供后续验证
+            # Store challenge for subsequent verification
             webauthn_data['authentication_challenge'] = challenge_b64
             webauthn_data['authentication_challenge_time'] = datetime.datetime.now(tz=datetime.timezone.utc).isoformat()
             user.webauthn_data = json.dumps(webauthn_data)
@@ -208,14 +208,14 @@ class WebAuthnManager:
 
     def verify_authentication(self, username: str, credential: Dict[str, Any]) -> Dict[str, Any]:
         """
-        验证认证响应
+        Verify authentication response
 
-        参数:
-        - username: 用户名
-        - credential: 凭证数据
+        Parameters:
+        - username: Username
+        - credential: Credential data
 
-        返回:
-        - 验证结果
+        Returns:
+        - Verification result
         """
         session = Session()
         try:
@@ -223,19 +223,19 @@ class WebAuthnManager:
             if not user:
                 raise ValueError("User not found")
 
-            # 提取已存储的挑战和凭证
+            # Extract stored challenge and credentials
             webauthn_data = json.loads(user.webauthn_data) if user.webauthn_data else {}
             stored_challenge = webauthn_data.get('authentication_challenge')
 
             if not stored_challenge:
                 raise ValueError("No authentication challenge found")
 
-            # 验证挑战是否匹配
+            # Verify if challenge matches
             client_challenge = credential.get('response', {}).get('clientDataJSON', {}).get('challenge')
             if client_challenge != stored_challenge:
                 raise ValueError("Challenge mismatch")
 
-            # 在实际实现中，这里会调用FIDO2库进行完整验证
+            # In actual implementation, this would call the FIDO2 library for complete verification
             # result = self.server.authenticate_complete(
             #    session['authentication_state'],
             #    credentials,
@@ -244,16 +244,16 @@ class WebAuthnManager:
             #    credential.get('signature')
             # )
 
-            # 模拟验证成功
-            # 在实际实现中，这里应该进行完整的签名验证
+            # Simulate successful verification
+            # In actual implementation, complete signature verification should be performed here
 
-            # 清除挑战
+            # Clear challenge
             webauthn_data.pop('authentication_challenge', None)
             webauthn_data.pop('authentication_challenge_time', None)
             user.webauthn_data = json.dumps(webauthn_data)
             session.commit()
 
-            # 记录操作
+            # Record operation
             log_operation(
                 user.user_id,
                 "webauthn_authenticate",
@@ -268,7 +268,7 @@ class WebAuthnManager:
             session.close()
 
 
-# 创建WebAuthn管理器实例
+# Create WebAuthn manager instance
 webauthn_manager = WebAuthnManager('bankingsystem.example.com', 'MyBank')
 
 
@@ -290,4 +290,3 @@ def authenticate_with_webauthn(username: str) -> Dict[str, Any]:
 def verify_webauthn_authentication(username: str, credential: Dict[str, Any]) -> Dict[str, Any]:
     """Verify WebAuthn authentication"""
     return webauthn_manager.verify_authentication(username, credential)
-

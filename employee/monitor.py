@@ -11,7 +11,7 @@ Session = sessionmaker(bind=engine)
 
 def mark_suspicious_transaction(employee_user, transaction_id, reason="Suspicious activity detected"):
     """
-    员工标记可疑交易
+    Employees flag suspicious transactions
     """
     session = Session()
     try:
@@ -19,15 +19,15 @@ def mark_suspicious_transaction(employee_user, transaction_id, reason="Suspiciou
         if not transaction:
             raise Exception("Transaction not found.")
 
-        # 标记交易为可疑
+        # Flag the transaction as suspicious
         transaction.is_suspicious = True
         transaction.suspicious_reason = reason
 
-        # 如果交易还未完成，拒绝交易
+        # If the transaction is not completed, reject it
         if transaction.status == 'pending':
             transaction.status = 'rejected'
 
-            # 如果是转账交易且有源账户和目标账户，回滚交易金额
+            # If it is a transfer transaction and the active account and the target account, roll back the transaction amount
             if (transaction.transaction_type == 'transfer' and
                     transaction.source_account_id and
                     transaction.destination_account_id):
@@ -42,7 +42,6 @@ def mark_suspicious_transaction(employee_user, transaction_id, reason="Suspiciou
 
         session.commit()
 
-        # 记录安全事件
         log_security_event(
             employee_user.user_id,
             "transaction_marked_suspicious",
@@ -59,7 +58,7 @@ def mark_suspicious_transaction(employee_user, transaction_id, reason="Suspiciou
 
 def freeze_customer_account(employee_user, account_id, reason="Security concern"):
     """
-    员工冻结客户账户
+    Employee freezes customer accounts
     """
     session = Session()
     try:
@@ -67,11 +66,9 @@ def freeze_customer_account(employee_user, account_id, reason="Security concern"
         if not account:
             raise Exception("Account not found.")
 
-        # 检查账户是否已经被冻结
         if getattr(account, 'is_frozen', False):
             raise Exception("Account is already frozen.")
 
-        # 冻结账户
         account.is_frozen = True
         account.freeze_reason = reason
         account.frozen_at = datetime.datetime.now(tz=datetime.timezone.utc)
@@ -79,14 +76,12 @@ def freeze_customer_account(employee_user, account_id, reason="Security concern"
 
         session.commit()
 
-        # 记录安全事件
         log_security_event(
             employee_user.user_id,
             "account_frozen",
             f"Account {account_id} frozen: {reason}"
         )
 
-        # 记录操作
         log_operation(
             employee_user.user_id,
             "freeze_account",
@@ -103,7 +98,7 @@ def freeze_customer_account(employee_user, account_id, reason="Security concern"
 
 def unfreeze_customer_account(employee_user, account_id, reason="Security verification completed"):
     """
-    员工解冻客户账户
+    Employee unfreezes customer accounts
     """
     session = Session()
     try:
@@ -111,11 +106,9 @@ def unfreeze_customer_account(employee_user, account_id, reason="Security verifi
         if not account:
             raise Exception("Account not found.")
 
-        # 检查账户是否已经被冻结
         if not getattr(account, 'is_frozen', False):
             raise Exception("Account is not frozen.")
 
-        # 解冻账户
         account.is_frozen = False
         account.unfreeze_reason = reason
         account.unfrozen_at = datetime.datetime.now(tz=datetime.timezone.utc)
@@ -123,14 +116,12 @@ def unfreeze_customer_account(employee_user, account_id, reason="Security verifi
 
         session.commit()
 
-        # 记录安全事件
         log_security_event(
             employee_user.user_id,
             "account_unfrozen",
             f"Account {account_id} unfrozen: {reason}"
         )
 
-        # 记录操作
         log_operation(
             employee_user.user_id,
             "unfreeze_account",
@@ -147,7 +138,7 @@ def unfreeze_customer_account(employee_user, account_id, reason="Security verifi
 
 def get_suspicious_transactions(employee_user, limit=50, offset=0):
     """
-    获取所有被标记为可疑的交易
+    Get all transactions that have been flagged as suspicious
     """
     session = Session()
     try:
@@ -169,7 +160,6 @@ def get_suspicious_transactions(employee_user, limit=50, offset=0):
                 'suspicious_reason': tx.suspicious_reason
             })
 
-        # 记录操作
         log_operation(
             employee_user.user_id,
             "view_suspicious_transactions",

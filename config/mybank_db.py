@@ -7,14 +7,14 @@ import datetime
 Base = declarative_base()
 
 
-# 1. 角色与权限管理（可选）
+# 1. Role and Rights Management (Optional)
 class RoleType(enum.Enum):
     client = "client"
     bank_employee = "bank_employee"
     system_admin = "system_admin"
 
 
-# 2. 用户管理
+# 2. user management
 class Users(Base):
     __tablename__ = 'users'
     user_id = Column(Integer, primary_key=True, autoincrement=True)
@@ -30,15 +30,14 @@ class Users(Base):
     require_password_change = Column(Boolean, default=False)
     webauthn_data = Column(Text,  nullable=True)
 
-    # 明文的姓名、电话、地址不再存储，改为加密存储：
-    encrypted_name = Column(LargeBinary)  # 存储 AES-256-GCM 加密后的姓名
-    name_nonce = Column(LargeBinary(12))  # 加密时使用的 nonce（12字节）
-    encrypted_phone = Column(LargeBinary)  # 加密后的电话号码
+    # Plaintext names, telephone numbers, and addresses are no longer stored, but encrypted:
+    encrypted_name = Column(LargeBinary)
+    name_nonce = Column(LargeBinary(12))
+    encrypted_phone = Column(LargeBinary)
     phone_nonce = Column(LargeBinary(12))
-    encrypted_address = Column(LargeBinary)  # 加密后的地址
+    encrypted_address = Column(LargeBinary)
     address_nonce = Column(LargeBinary(12))
 
-    # 存储使用哪个密钥版本加密（例如 "v1", "v2"），所有敏感字段可以共享同一版本
     key_name = Column(String(50))
     key_version = Column(String(50))
     last_updated_by = Column(Integer, ForeignKey('users.user_id'))
@@ -48,7 +47,7 @@ class Users(Base):
     updated_at = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc),
                         onupdate=datetime.datetime.now(tz=datetime.timezone.utc))
 
-    # 关联关系
+    # relationship
     accounts = relationship("Accounts", foreign_keys="[Accounts.user_id]", back_populates="user")
     sent_messages = relationship("Messages", foreign_keys="[Messages.sender_id]", back_populates="sender")
     received_messages = relationship("Messages", foreign_keys="[Messages.receiver_id]", back_populates="receiver")
@@ -57,19 +56,19 @@ class Users(Base):
     security_logs = relationship("SecurityLogs", back_populates="user")
 
 
-# 3. 客户业务操作相关
+# 3. Related to customer service operations
 
 class Accounts(Base):
     __tablename__ = 'accounts'
     account_id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey('users.user_id'), nullable=False)
-    # 账户号码作为敏感信息采用加密存储：
+    # Account numbers are encrypted as sensitive information:
     encrypted_account_number = Column(LargeBinary, nullable=False)
     account_number_nonce = Column(LargeBinary(12), nullable=False)
     account_number_hash = Column(String(64), index=True)
     key_version = Column(String(50))
     key_name = Column(String(50))
-    # 其他字段保留明文
+
     balance = Column(DECIMAL(15, 2), default=0.00)
     account_type = Column(String(50))
     created_at = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc))
@@ -97,15 +96,15 @@ class Transactions(Base):
     destination_account_id = Column(Integer, ForeignKey('accounts.account_id'))
     amount = Column(DECIMAL(15, 2), nullable=False)
     timestamp = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc))
-    transaction_type = Column(String(50))  # 如 domestic_transfer, international_transfer, deposit, withdrawal 等
+    transaction_type = Column(String(50))  #
     status = Column(String(50), default='pending')
     integrity_checksum = Column(String(255))
-    # 如果交易有敏感备注或附言，采用加密存储
-    encrypted_note = Column(LargeBinary)  # 加密后的交易备注
-    note_nonce = Column(LargeBinary(12))  # 加密时用的 nonce
-    key_version = Column(String(50))  # 对应的密钥版本
+    # If the transaction has sensitive notes or postscripts, use encrypted storage
+    encrypted_note = Column(LargeBinary)
+    note_nonce = Column(LargeBinary(12))
+    key_version = Column(String(50))
     key_name = Column(String(50))
-    transaction_signature = Column(String(255), nullable=True)  # 存储HMAC签名
+    transaction_signature = Column(String(255), nullable=True)
     requires_additional_verification = Column(Boolean, default=False)
     verification_status = Column(String(50), default='not_required')  # 'not_required', 'pending', 'verified', 'failed'
     is_suspicious = Column(Boolean, default=False)
@@ -123,11 +122,10 @@ class Messages(Base):
     sender_id = Column(Integer, ForeignKey('users.user_id'), nullable=False)
     receiver_id = Column(Integer, ForeignKey('users.user_id'), nullable=False)
 
-    # 存储加密后的消息内容相关信息
-    key_version = Column(String(50))    # 用于标识使用哪个密钥版本
+    key_version = Column(String(50))
     key_name = Column(String(50))
-    nonce = Column(LargeBinary(12))       # AES-GCM 加密时使用的 nonce
-    ciphertext = Column(LargeBinary)       # 加密后的消息内容
+    nonce = Column(LargeBinary(12))
+    ciphertext = Column(LargeBinary)
 
     sent_at = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc))
     read_status = Column(String(50), default='unread')
@@ -136,7 +134,7 @@ class Messages(Base):
     receiver = relationship("Users", foreign_keys=[receiver_id], back_populates="received_messages")
 
 
-# 4. 登录与审计相关
+# 4. login and audit
 
 class UserSessions(Base):
     __tablename__ = 'user_sessions'
@@ -164,15 +162,15 @@ class AuditLog(Base):
     user = relationship("Users", back_populates="audit_logs")
 
 
-# 5. 系统维护与安全管理相关
+# 5. System maintenance and security management
 
 class KeyManagement(Base):
     __tablename__ = 'key_management'
     key_id = Column(Integer, primary_key=True, autoincrement=True)
     key_name = Column(String(50), nullable=False)
-    key_type = Column(String(50), nullable=False)  # 如 symmetric, asymmetric
+    key_type = Column(String(50), nullable=False)
     key_version = Column(String(50), nullable=False)
-    key_value = Column(Text, nullable=False)  # 建议加密存储
+    key_value = Column(Text, nullable=False)
     expiry_date = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc))
 
@@ -180,7 +178,7 @@ class KeyManagement(Base):
 class SecurityLogs(Base):
     __tablename__ = 'security_logs'
     security_log_id = Column(Integer, primary_key=True, autoincrement=True)
-    event_type = Column(String(100), nullable=False)  # 如异常登录、权限越界等
+    event_type = Column(String(100), nullable=False)
     description = Column(Text)
     user_id = Column(Integer, ForeignKey('users.user_id'))
     created_at = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc))
@@ -203,13 +201,13 @@ class BlockchainBlock(Base):
     block_hash = Column(String(64))
 
 
-# 区块链存储的交易记录
+# A record of transactions stored on the blockchain
 class BlockchainTransaction(Base):
     __tablename__ = 'blockchain_transactions'
 
     tx_id = Column(Integer, primary_key=True, autoincrement=True)
     block_id = Column(Integer)
-    transaction_id = Column(Integer)  # 原始交易ID
+    transaction_id = Column(Integer)
     transaction_hash = Column(String(64))
     transaction_data = Column(Text)
     timestamp = Column(DateTime(timezone=True), default=datetime.datetime.now(tz=datetime.timezone.utc))

@@ -4,10 +4,10 @@ import json
 import hmac
 import pyotp
 from decimal import Decimal
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
-from config.mybank_db import Transactions, Users, SecurityLogs, Accounts
+from config.mybank_db import Transactions, Users, SecurityLogs
 from config.config import DATABASE_URI
 from security.encryption import compute_hmac_sha256
 import datetime
@@ -15,8 +15,8 @@ import datetime
 engine = create_engine(DATABASE_URI)
 Session = sessionmaker(bind=engine)
 
-# 定义高风险交易阈值
-HIGH_VALUE_THRESHOLD = Decimal('10000.00')  # 高额交易阈值
+# Define high-risk transaction thresholds
+HIGH_VALUE_THRESHOLD = Decimal('10000.00')  # High-value transaction threshold
 UNUSUAL_TRANSACTION_TYPES = ["international_transfer", "crypto_exchange"]
 
 
@@ -42,7 +42,7 @@ def generate_transaction_hash(transaction_data: Dict[str, Any]) -> str:
 
 def verify_transaction_integrity(transaction_id: int) -> bool:
     """
-    验证交易记录的完整性
+    Verify the integrity of transaction records
     """
     session = Session()
     try:
@@ -50,24 +50,24 @@ def verify_transaction_integrity(transaction_id: int) -> bool:
         if not transaction:
             return False
 
-        # 只有存储了完整性校验和的交易才能验证
+        # Only transactions with integrity checksums can be verified
         if not transaction.integrity_checksum:
             return False
 
-        # 从交易记录创建交易数据字典
+        # Create transaction data dictionary from transaction record
         transaction_data = {
             "source_account_id": transaction.source_account_id,
             "destination_account_id": transaction.destination_account_id,
             "amount": transaction.amount,
             "transaction_type": transaction.transaction_type,
             "timestamp": transaction.timestamp,
-            "details": transaction.encrypted_note  # 注意这里使用加密后的详情
+            "details": transaction.encrypted_note  # Note that encrypted details are used here
         }
 
-        # 生成当前数据的哈希值
+        # Generate hash of current data
         current_hash = generate_transaction_hash(transaction_data)
 
-        # 比较与存储的哈希值
+        # Compare with stored hash value
         return current_hash == transaction.integrity_checksum
     finally:
         session.close()
@@ -75,9 +75,9 @@ def verify_transaction_integrity(transaction_id: int) -> bool:
 
 def generate_transaction_signature(transaction_data: Dict[str, Any], hmac_key: bytes) -> str:
     """
-    使用HMAC为交易生成数字签名
+    Generate digital signature for transactions using HMAC
     """
-    # 创建交易数据的规范化表示
+    # Create normalized representation of transaction data
     canonical_data = {
         "source_account_id": transaction_data.get("source_account_id"),
         "destination_account_id": transaction_data.get("destination_account_id"),
@@ -89,16 +89,16 @@ def generate_transaction_signature(transaction_data: Dict[str, Any], hmac_key: b
         "details": base64.b64encode(transaction_data.get("details", "")).decode('utf-8')
     }
 
-    # 将数据转换为JSON字符串
+    # Convert data to JSON string
     canonical_json = json.dumps(canonical_data, sort_keys=True)
 
-    # 计算HMAC
+    # Calculate HMAC
     return compute_hmac_sha256(canonical_json.encode('utf-8'), hmac_key)
 
 
 def verify_transaction_signature(transaction_data: Dict[str, Any], signature: str, hmac_key: bytes) -> bool:
     """
-    验证交易签名
+    Verify transaction signature
     """
     expected_signature = generate_transaction_signature(transaction_data, hmac_key)
     return hmac.compare_digest(expected_signature, signature)
@@ -106,9 +106,9 @@ def verify_transaction_signature(transaction_data: Dict[str, Any], signature: st
 
 def is_high_risk_transaction(transaction_data: Dict[str, Any]) -> bool:
     """
-    检查交易是否为高风险交易
+    Check if a transaction is high-risk
     """
-    # 检查交易金额是否超过阈值
+    # Check if transaction amount exceeds threshold
     amount = transaction_data.get("amount", 0)
     if isinstance(amount, str):
         amount = Decimal(amount)
@@ -116,48 +116,48 @@ def is_high_risk_transaction(transaction_data: Dict[str, Any]) -> bool:
     if amount >= HIGH_VALUE_THRESHOLD:
         return True
 
-    # 检查交易类型是否为不常见类型
+    # Check if transaction type is unusual
     if transaction_data.get("transaction_type") in UNUSUAL_TRANSACTION_TYPES:
         return True
 
-    # 可以添加更多的风险检查逻辑，例如跨国交易、新账户大额交易等
+    # Can add more risk checking logic, such as cross-border transactions, large transactions from new accounts, etc.
 
     return False
 
 
 def require_additional_verification(transaction_data: Dict[str, Any]) -> bool:
     """
-    确定交易是否需要额外验证
+    Determine if a transaction requires additional verification
     """
-    # 高风险交易需要额外验证
+    # High-risk transactions need additional verification
     if is_high_risk_transaction(transaction_data):
         return True
 
-    # 其他可能需要验证的情况
-    # 例如，不常用地点的交易，异常交易模式等
+    # Other situations that may require verification
+    # For example, transactions from unusual locations, abnormal transaction patterns, etc.
 
     return False
 
 
 def verify_high_value_transaction(transaction_id: Optional[int], user_id: int, verification_code: str) -> bool:
     """
-    完成高额交易的额外验证
-    如果transaction_id为None，只验证码验证，不绑定到特定交易
+    Complete additional verification for high-value transactions
+    If transaction_id is None, only verify the code without binding to a specific transaction
     """
     session = Session()
     try:
-        # 验证是否有效交易（如果提供了交易ID）
+        # Verify if it's a valid transaction (if transaction ID is provided)
         if transaction_id is not None:
             transaction = session.query(Transactions).filter_by(transaction_id=transaction_id).first()
             if not transaction:
                 return False
 
-        # 获取用户TOTP密钥
+        # Get user TOTP secret
         user = session.query(Users).filter_by(user_id=user_id).first()
         if not user:
             return False
 
-        # 使用TOTP进行额外验证
+        # Use TOTP for additional verification
         totp = pyotp.TOTP(user.totp_secret)
         current_totp = totp.now()
         print(f"Current TOTP code: {current_totp}")
@@ -165,15 +165,15 @@ def verify_high_value_transaction(transaction_id: Optional[int], user_id: int, v
 
         verification_result = totp.verify(verification_code)
 
-        # 如果有交易ID，记录验证结果
+        # If there's a transaction ID, record the verification result
         if transaction_id is not None:
-            # 更新交易验证状态
+            # Update transaction verification status
             transaction = session.query(Transactions).filter_by(transaction_id=transaction_id).first()
             if transaction:
                 transaction.verification_status = 'verified' if verification_result else 'failed'
                 session.commit()
 
-            # 记录验证事件
+            # Record verification event
             security_log = SecurityLogs(
                 user_id=user_id,
                 event_type="high_value_transaction_verification",

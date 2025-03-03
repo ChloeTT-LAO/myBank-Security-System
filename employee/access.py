@@ -12,11 +12,11 @@ Session = sessionmaker(bind=engine)
 
 def view_customer_accounts(employee_user, customer_id):
     """
-    员工查看指定客户的所有账户
+    Employees view all accounts of designated customers
     """
     session = Session()
     try:
-        # 确保 customer_id 存在且是 client
+        # Make sure the customer id exists and is a client
         customer = session.query(Users).filter_by(user_id=customer_id).first()
         if not customer or customer.role.value != 'client':
             raise Exception("The specified user is not a valid customer.")
@@ -24,7 +24,7 @@ def view_customer_accounts(employee_user, customer_id):
         accounts = session.query(Accounts).filter_by(user_id=customer_id).all()
         result = []
         for acc in accounts:
-            # 尝试解密账号信息
+            # Trying to decrypt the account information
             account_number = "Encrypted"
             try:
                 if acc.encrypted_account_number and acc.account_number_nonce and acc.key_name:
@@ -46,7 +46,6 @@ def view_customer_accounts(employee_user, customer_id):
                 'status': 'Frozen' if getattr(acc, 'is_frozen', False) else 'Active'
             })
 
-        # 记录操作
         log_operation(
             employee_user.user_id,
             "view_customer_accounts",
@@ -60,16 +59,16 @@ def view_customer_accounts(employee_user, customer_id):
 
 def view_customer_transactions(employee_user, account_id):
     """
-    员工查看指定账户的交易记录
+    The employee reviews the transaction history of the designated account
     """
     session = Session()
     try:
-        # 找到账户并确认它属于某个客户
+        # Find the account and confirm that it belongs to a customer
         account = session.query(Accounts).filter_by(account_id=account_id).first()
         if not account:
             raise Exception("Account not found.")
 
-        # 查询与此账户相关的所有交易
+        # Check all transactions related to this account
         txs = session.query(Transactions).filter(
             (Transactions.source_account_id == account_id) |
             (Transactions.destination_account_id == account_id)
@@ -77,7 +76,7 @@ def view_customer_transactions(employee_user, account_id):
 
         result = []
         for t in txs:
-            # 尝试解密交易详情
+            # Try to decrypt the transaction details
             details = None
             try:
                 if t.encrypted_note and t.note_nonce and t.key_name:
@@ -104,7 +103,6 @@ def view_customer_transactions(employee_user, account_id):
                 'verification_status': getattr(t, 'verification_status', None)
             })
 
-        # 记录操作
         log_operation(
             employee_user.user_id,
             "view_account_transactions",

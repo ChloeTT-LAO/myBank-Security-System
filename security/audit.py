@@ -10,7 +10,7 @@ Session = sessionmaker(bind=engine)
 
 def log_operation(user_id: int, operation: str, details: str = "", ip_address: str = None, user_agent: str = None):
     """
-    记录用户操作到审计日志
+    Records user operations to audit logs
     """
     session = Session()
     try:
@@ -35,7 +35,7 @@ def log_operation(user_id: int, operation: str, details: str = "", ip_address: s
 
 def log_security_event(user_id: int, event_type: str, description: str, ip_address: str = None, user_agent: str = None):
     """
-    记录安全事件
+    Log security events
     """
     session = Session()
     try:
@@ -60,7 +60,7 @@ def log_security_event(user_id: int, event_type: str, description: str, ip_addre
 
 def get_user_audit_logs(user_id: int, limit: int = 100, offset: int = 0, operation_type: str = None):
     """
-    获取用户的操作日志
+    Obtain user operation logs
     """
     session = Session()
     try:
@@ -89,7 +89,7 @@ def get_user_audit_logs(user_id: int, limit: int = 100, offset: int = 0, operati
 def get_security_logs(admin_user_id: int, limit: int = 100, offset: int = 0, event_type: str = None,
                       user_id: int = None):
     """
-    管理员获取安全日志
+    The administrator obtains security logs
     """
     session = Session()
     try:
